@@ -44,6 +44,38 @@ describe("ConfigurationPanel: role switching", () => {
   });
 });
 
+/**
+ * Regression test: the Available Widgets palette is static, role-independent
+ * data (WIDGET_PALETTE never varies by role) but used to be nested inside the
+ * same "!draftConfig -> show Loading configuration..." gate as the canvas, so
+ * it unmounted and disappeared on every role switch even though it had
+ * nothing to reload. DndContext (and the palette inside it) now render
+ * unconditionally; only the canvas column waits on draftConfig.
+ */
+describe("ConfigurationPanel: Available Widgets availability", () => {
+  it("stays mounted and interactive through a role switch instead of disappearing behind the canvas's loading state", async () => {
+    render(
+      <Provider store={makeStore()}>
+        <ConfigurationPanel />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByTestId("canvas-card").length).toBe(18));
+    const paletteCountBefore = screen.getAllByTestId("palette-item").length;
+    expect(paletteCountBefore).toBeGreaterThan(0);
+
+    screen.getByRole("radio", { name: "Finance Manager" }).click();
+
+    // While the canvas is between roles (draftConfig briefly null while the
+    // new role's config fetches), the palette must not go with it.
+    await waitFor(() => expect(screen.getByText("Loading configuration...")).toBeTruthy());
+    expect(screen.getAllByTestId("palette-item").length).toBe(paletteCountBefore);
+
+    await waitFor(() => expect(screen.getAllByTestId("canvas-card").length).toBe(5), { timeout: 5000 });
+    expect(screen.getAllByTestId("palette-item").length).toBe(paletteCountBefore);
+  });
+});
+
 describe("ConfigurationPanel: undo/redo", () => {
   it("enables Undo after an edit, reverts it, then enables Redo to reapply it", async () => {
     render(

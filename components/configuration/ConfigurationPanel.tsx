@@ -252,31 +252,39 @@ export default function ConfigurationPanel() {
         </div>
       )}
 
-      {!draftConfig || (isLoading && !isFetching) ? (
-        <div className={styles.loading}>Loading configuration...</div>
-      ) : (
-        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className={styles.layout}>
-            <div className={styles.column}>
-              <span className={styles.sectionTitle}>Available Widgets</span>
-              <AvailableWidgetsPanel onAdd={(template) => handleAddFromPalette(template)} />
-            </div>
-            <div className={styles.column}>
-              <span className={styles.sectionTitle}>Canvas</span>
+      {/*
+        DndContext (and the Available Widgets column inside it) render
+        unconditionally -- the palette is static, role-independent data with
+        nothing to load, so it must not disappear just because the *canvas*
+        side is between roles. Only the canvas column itself waits on
+        draftConfig; DndContext has to wrap the palette regardless since
+        dnd-kit's useDraggable requires a DndContext ancestor.
+      */}
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <div className={styles.layout}>
+          <div className={styles.column}>
+            <span className={styles.sectionTitle}>Available Widgets</span>
+            <AvailableWidgetsPanel onAdd={(template) => handleAddFromPalette(template)} />
+          </div>
+          <div className={styles.column}>
+            <span className={styles.sectionTitle}>Canvas</span>
+            {!draftConfig || (isLoading && !isFetching) ? (
+              <div className={styles.loading}>Loading configuration...</div>
+            ) : (
               <DashboardCanvas
                 widgets={draftConfig.widgets}
                 selectedWidgetId={selectedWidgetId}
                 onSelectWidget={setSelectedWidgetId}
               />
-            </div>
+            )}
           </div>
+        </div>
 
-          <DragOverlay>
-            {activeDrag?.type === "palette" && <div className={styles.dragOverlayCard}>{activeDrag.template.title}</div>}
-            {activeDrag?.type === "canvas-item" && <div className={styles.dragOverlayCard}>{activeDrag.widget.title}</div>}
-          </DragOverlay>
-        </DndContext>
-      )}
+        <DragOverlay>
+          {activeDrag?.type === "palette" && <div className={styles.dragOverlayCard}>{activeDrag.template.title}</div>}
+          {activeDrag?.type === "canvas-item" && <div className={styles.dragOverlayCard}>{activeDrag.widget.title}</div>}
+        </DragOverlay>
+      </DndContext>
 
       {selectedWidget && <ConfigDrawer widget={selectedWidget} onClose={() => setSelectedWidgetId(null)} />}
     </div>
