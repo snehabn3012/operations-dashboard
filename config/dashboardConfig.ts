@@ -5,6 +5,7 @@ import {
   Role,
   SortOption,
   WidgetConfig,
+  WidgetFilter,
 } from "@/types/dashboard";
 import { SIMULATE_ERROR_VALUE } from "@/types/dashboard";
 
@@ -205,23 +206,41 @@ const ROLE_MODULE_IDS: Record<Role, string[]> = {
   customer: ["recent-transactions", "payments"],
 };
 
-/** Roles that only see their own activity get relabeled modules and a "self" scope filter. */
-const CUSTOMER_TITLE_OVERRIDES: Record<string, string> = {
-  "recent-transactions": "My Transactions",
-  payments: "My Payments",
+/**
+ * Roles whose entire view is scoped to their own activity get this filter
+ * applied to every widget in their default config. A new self-scoped role is
+ * a new entry here, not a new `if (role === ...)` branch -- see the
+ * "Most Important Architectural Principle" this repo is built against
+ * (a new role must not require touching this function's logic).
+ */
+const ROLE_SELF_SCOPED_FILTER: Partial<Record<Role, WidgetFilter>> = {
+  customer: { value: "self", label: "My Activity" },
+};
+
+/** Per-role, per-widget title overrides (e.g. a self-scoped role sees "My Transactions" instead of "Recent Transactions"). */
+const ROLE_WIDGET_TITLE_OVERRIDES: Partial<Record<Role, Record<string, string>>> = {
+  customer: {
+    "recent-transactions": "My Transactions",
+    payments: "My Payments",
+  },
 };
 
 export function getDefaultConfigForRole(role: Role): DashboardConfig {
   const ids = ROLE_MODULE_IDS[role] ?? [];
+  const selfScopedFilter = ROLE_SELF_SCOPED_FILTER[role];
+  const titleOverrides = ROLE_WIDGET_TITLE_OVERRIDES[role];
+
   const widgets = ids
     .map((id) => MODULE_CATALOG.find((m) => m.id === id))
     .filter((m): m is WidgetConfig => Boolean(m))
     .map((widget, index) => {
       const clone: WidgetConfig = JSON.parse(JSON.stringify(widget));
       clone.order = index + 1;
-      if (role === "customer") {
-        clone.title = CUSTOMER_TITLE_OVERRIDES[clone.id] ?? clone.title;
-        clone.filter = { value: "self", label: "My Activity" };
+      if (titleOverrides?.[clone.id]) {
+        clone.title = titleOverrides[clone.id];
+      }
+      if (selfScopedFilter) {
+        clone.filter = selfScopedFilter;
       }
       return clone;
     });

@@ -40,6 +40,7 @@ const initialState: DashboardUiState = {
   past: [],
   future: [],
   coalescingTitleWidgetId: null,
+  editGeneration: 0,
 };
 
 describe("dashboardSlice: /configure builder flow", () => {
@@ -114,7 +115,10 @@ describe("dashboardSlice: /configure builder flow", () => {
     expect(state.isDirty).toBe(true);
 
     const saved = { ...state.draftConfig!, updatedAt: "2026-01-02T00:00:00.000Z" };
-    state = reducer(state, saveDraftConfigSucceeded(saved));
+    state = reducer(
+      state,
+      saveDraftConfigSucceeded({ result: saved, dispatchedForRole: state.draftConfig!.role, dispatchedAtGeneration: state.editGeneration }),
+    );
 
     expect(state.draftConfig).toEqual(saved);
     expect(state.isDirty).toBe(false);
@@ -244,7 +248,14 @@ describe("dashboardSlice: undo/redo", () => {
     state = reducer(state, updateWidgetVisibility({ id: "a", visible: false })); // the "bad" edit, now saved below
     expect(state.past.length).toBe(1);
 
-    state = reducer(state, saveDraftConfigSucceeded({ ...state.draftConfig!, revision: 1 }));
+    state = reducer(
+      state,
+      saveDraftConfigSucceeded({
+        result: { ...state.draftConfig!, revision: 1 },
+        dispatchedForRole: state.draftConfig!.role,
+        dispatchedAtGeneration: state.editGeneration,
+      }),
+    );
     expect(state.past.length).toBe(1); // not cleared by save
 
     state = reducer(state, undo());
@@ -270,5 +281,62 @@ describe("dashboardSlice: undo/redo", () => {
     }
     expect(state.past.length).toBe(0);
     expect(state.future.length).toBe(MAX_HISTORY);
+  });
+});
+
+describe("dashboardSlice: saveDraftConfigSucceeded does not clobber edits made while the save was in flight", () => {
+  it("keeps a local edit made after dispatch, adopting only the server-authoritative metadata", () => {
+    let state = reducer(initialState, loadDraftConfig(makeConfig([makeWidget({ id: "a", order: 1, visible: true })])));
+
+    // The edit that's about to be saved.
+    state = reducer(state, updateWidgetVisibility({ id: "a", visible: false }));
+    const dispatchedForRole = state.draftConfig!.role;
+    const dispatchedAtGeneration = state.editGeneration; // captured "at dispatch time"
+
+    // While that save is still in flight, the user makes ANOTHER edit.
+    state = reducer(state, updateWidgetTitle({ id: "a", title: "Renamed mid-save" }));
+
+    // The in-flight save now resolves. Its response reflects only the first
+    // edit (visible: false) -- it has no idea the title changed afterward.
+    const serverResponse = { ...state.draftConfig!, widgets: [{ ...state.draftConfig!.widgets[0], title: "a" }], revision: 1 };
+    state = reducer(state, saveDraftConfigSucceeded({ result: serverResponse, dispatchedForRole, dispatchedAtGeneration }));
+
+    // The mid-save title edit must survive -- this is the bug: a naive
+    // overwrite would silently revert it to "a" here.
+    expect(state.draftConfig?.widgets[0].title).toBe("Renamed mid-save");
+    expect(state.isDirty).toBe(true); // there's still an edit that was never actually saved
+    // But the server-authoritative revision *is* adopted, so the next save
+    // attempt checks against the correct baseline instead of conflicting
+    // with the save that just succeeded.
+    expect(state.draftConfig?.revision).toBe(1);
+  });
+
+  it("adopts the response wholesale when nothing changed since dispatch", () => {
+    let state = reducer(initialState, loadDraftConfig(makeConfig([makeWidget({ id: "a", order: 1, visible: true })])));
+    state = reducer(state, updateWidgetVisibility({ id: "a", visible: false }));
+    const dispatchedForRole = state.draftConfig!.role;
+    const dispatchedAtGeneration = state.editGeneration;
+
+    const serverResponse = { ...state.draftConfig!, revision: 1, updatedAt: "2026-02-01T00:00:00.000Z" };
+    state = reducer(state, saveDraftConfigSucceeded({ result: serverResponse, dispatchedForRole, dispatchedAtGeneration }));
+
+    expect(state.draftConfig).toEqual(serverResponse);
+    expect(state.isDirty).toBe(false);
+  });
+
+  it("ignores a stale save's response if the draft has since moved to a different role", () => {
+    let state = reducer(initialState, loadDraftConfig(makeConfig([makeWidget({ id: "a", order: 1 })])));
+    const dispatchedForRole = state.draftConfig!.role; // "financeManager"
+    const dispatchedAtGeneration = state.editGeneration;
+
+    state = reducer(state, setSelectedRole("supportAgent"));
+    state = reducer(state, loadDraftConfig({ ...makeConfig([makeWidget({ id: "b", order: 1 })]), role: "supportAgent" }));
+
+    const staleResponse = { ...makeConfig([makeWidget({ id: "a", order: 1 })]), revision: 1 };
+    state = reducer(state, saveDraftConfigSucceeded({ result: staleResponse, dispatchedForRole, dispatchedAtGeneration }));
+
+    // The now-current (supportAgent) draft must be untouched by the stale financeManager save.
+    expect(state.draftConfig?.role).toBe("supportAgent");
+    expect(state.draftConfig?.widgets[0].id).toBe("b");
   });
 });

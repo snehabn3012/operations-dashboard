@@ -35,6 +35,14 @@ export interface DashboardUiState {
   future: WidgetConfig[][];
   /** Which widget's title is mid-edit, so consecutive keystrokes coalesce into one undo step instead of one per character. Cleared by any other action. */
   coalescingTitleWidgetId: string | null;
+  /**
+   * Bumped on every edit to `draftConfig.widgets` (including coalesced title
+   * keystrokes and undo/redo). Lets a save-in-flight tell, when it resolves,
+   * whether the user changed anything *after* it was dispatched -- see
+   * saveDraftConfigSucceeded. Reset alongside history whenever the draft's
+   * baseline is replaced wholesale.
+   */
+  editGeneration: number;
 }
 
 const initialState: DashboardUiState = {
@@ -44,6 +52,7 @@ const initialState: DashboardUiState = {
   past: [],
   future: [],
   coalescingTitleWidgetId: null,
+  editGeneration: 0,
 };
 
 function findWidget(state: DashboardUiState, id: string): WidgetConfig | undefined {
@@ -64,6 +73,10 @@ function snapshotWidgets(widgets: WidgetConfig[]): WidgetConfig[] {
 /** Caps local undo/redo history so a very long editing session can't grow it unboundedly; oldest steps are dropped first. `future` needs no separate cap -- it can only grow by moving entries out of `past` via undo, so it's already bounded by this. */
 export const MAX_HISTORY = 50;
 
+function bumpEditGeneration(state: DashboardUiState) {
+  state.editGeneration += 1;
+}
+
 /** Records an undo step for the widget-content change about to happen, and invalidates any redo path (a fresh edit after an undo discards the old future, rather than branching). Call before mutating draftConfig.widgets. */
 function pushHistory(state: DashboardUiState) {
   if (!state.draftConfig) return;
@@ -73,6 +86,7 @@ function pushHistory(state: DashboardUiState) {
   }
   state.future = [];
   state.coalescingTitleWidgetId = null;
+  bumpEditGeneration(state);
 }
 
 /** Called whenever the draft's baseline is replaced wholesale (fresh load, role switch) rather than edited -- old history wouldn't reliably apply against a different role's or revision's widgets. */
@@ -80,6 +94,7 @@ function clearHistory(state: DashboardUiState) {
   state.past = [];
   state.future = [];
   state.coalescingTitleWidgetId = null;
+  state.editGeneration = 0;
 }
 
 const dashboardSlice = createSlice({
@@ -103,10 +118,39 @@ const dashboardSlice = createSlice({
       state.draftConfig = action.payload;
       state.isDirty = true;
     },
-    /** Deliberately does not clear history: a bad save should still be undoable (and re-saveable) locally. */
-    saveDraftConfigSucceeded(state, action: PayloadAction<DashboardConfig>) {
-      state.draftConfig = action.payload;
-      state.isDirty = false;
+    /**
+     * Deliberately does not clear history: a bad save should still be
+     * undoable (and re-saveable) locally.
+     *
+     * `dispatchedForRole`/`dispatchedAtGeneration` are captured by the caller
+     * at the moment the save was dispatched, not when it resolves. If the
+     * user made further edits (or switched roles) while this save was in
+     * flight, a full overwrite here would silently discard that work the
+     * instant the response arrives -- a real, empirically-reproduced bug.
+     * Instead: only adopt the response wholesale if nothing changed since
+     * dispatch; otherwise keep the local widgets and adopt only the
+     * server-authoritative metadata (role/version/revision/updatedAt), which
+     * is what lets the *next* save's revision check pass rather than
+     * incorrectly conflicting with the save that just succeeded.
+     */
+    saveDraftConfigSucceeded(
+      state,
+      action: PayloadAction<{ result: DashboardConfig; dispatchedForRole: Role; dispatchedAtGeneration: number }>,
+    ) {
+      const { result, dispatchedForRole, dispatchedAtGeneration } = action.payload;
+      if (!state.draftConfig || state.draftConfig.role !== dispatchedForRole) {
+        return; // the draft has moved on to a different role since this was dispatched; this response is moot
+      }
+      if (state.editGeneration === dispatchedAtGeneration) {
+        state.draftConfig = result;
+        state.isDirty = false;
+      } else {
+        state.draftConfig.role = result.role;
+        state.draftConfig.version = result.version;
+        state.draftConfig.revision = result.revision;
+        state.draftConfig.updatedAt = result.updatedAt;
+        // isDirty stays true: there are still local edits this save never saw.
+      }
       state.coalescingTitleWidgetId = null;
     },
     undo(state) {
@@ -116,6 +160,7 @@ const dashboardSlice = createSlice({
       state.draftConfig.widgets = previous;
       state.isDirty = true;
       state.coalescingTitleWidgetId = null;
+      bumpEditGeneration(state);
     },
     redo(state) {
       if (!state.draftConfig || state.future.length === 0) return;
@@ -124,6 +169,7 @@ const dashboardSlice = createSlice({
       state.draftConfig.widgets = next;
       state.isDirty = true;
       state.coalescingTitleWidgetId = null;
+      bumpEditGeneration(state);
     },
     updateWidgetVisibility(state, action: PayloadAction<{ id: string; visible: boolean }>) {
       const widget = findWidget(state, action.payload.id);
@@ -137,8 +183,10 @@ const dashboardSlice = createSlice({
       const widget = findWidget(state, action.payload.id);
       if (!widget) return;
       if (state.coalescingTitleWidgetId !== action.payload.id) {
-        pushHistory(state);
+        pushHistory(state); // also bumps editGeneration
         state.coalescingTitleWidgetId = action.payload.id;
+      } else {
+        bumpEditGeneration(state); // still a real edit, even though it coalesces into the same undo step
       }
       widget.title = action.payload.title;
       state.isDirty = true;

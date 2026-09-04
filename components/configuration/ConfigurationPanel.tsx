@@ -58,6 +58,7 @@ export default function ConfigurationPanel() {
   const isDirty = useAppSelector((state) => state.dashboardUi.isDirty);
   const canUndo = useAppSelector((state) => state.dashboardUi.past.length > 0);
   const canRedo = useAppSelector((state) => state.dashboardUi.future.length > 0);
+  const editGeneration = useAppSelector((state) => state.dashboardUi.editGeneration);
 
   const { data: savedConfig, isLoading, isFetching, refetch: refetchConfig } = useGetDashboardConfigQuery(selectedRole);
   const [updateConfig, { isLoading: isSaving }] = useUpdateDashboardConfigMutation();
@@ -101,12 +102,18 @@ export default function ConfigurationPanel() {
 
   const handleSave = async () => {
     if (!draftConfig) return;
+    // Captured now, not read after the await: if the user edits the draft
+    // (or switches roles) while this request is in flight, the reducer needs
+    // to know what the draft looked like *at dispatch time* to tell whether
+    // it's still safe to overwrite it wholesale when the response arrives.
+    const dispatchedForRole = selectedRole;
+    const dispatchedAtGeneration = editGeneration;
     const result = await updateConfig({ role: selectedRole, config: draftConfig });
     if ("error" in result) {
       if (result.error === CONFIG_CONFLICT_ERROR) setSaveConflict(true);
       return;
     }
-    dispatch(saveDraftConfigSucceeded(result.data));
+    dispatch(saveDraftConfigSucceeded({ result: result.data, dispatchedForRole, dispatchedAtGeneration }));
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 2500);
   };
@@ -194,7 +201,14 @@ export default function ConfigurationPanel() {
         <RoleSelector />
         <div className={styles.actions}>
           {isDirty && <span className={styles.dirtyBadge}>Unsaved changes</span>}
-          {justSaved && !isDirty && <span className={styles.savedBadge}>Saved ✓</span>}
+          {justSaved && !isDirty && (
+            <span
+              className={styles.savedBadge}
+              title="Kept in memory for this browser tab -- not persisted to a server. Refreshing or closing this tab loses it."
+            >
+              Saved to this session ✓
+            </span>
+          )}
           <button
             type="button"
             className={styles.button}

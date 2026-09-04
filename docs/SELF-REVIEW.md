@@ -39,3 +39,9 @@ What follows is different: the three things that, reviewing this as if it were s
 **Current limitation:** There is no authentication, no session, no server-side (or any) check that the "role" a browser tab claims to be viewing as is one that browser is actually authorized for. `Header.tsx`'s `<select>` is the entire access-control model.
 
 **Recommended improvement:** Not something to bolt onto this prototype — it needs a real backend and real auth first (see finding 1), at which point role needs to come from an authenticated session rather than a free-standing dropdown, and every config read/write needs a server-side check that the requesting user is actually permitted to act as the role they're claiming.
+
+---
+
+## Update
+
+A follow-up adversarial review (see the repository's PR review history) went further than this self-review did and found two things it missed: a real, empirically-reproduced silent-data-loss race (editing while a save is in flight could get silently discarded) and a hardcoded `if (role === "customer")` branch in `config/dashboardConfig.ts` that violated this project's own core "no role-specific code" principle. Both have since been fixed — see `DESIGN.md` sections 2 and 9 — and finding 1 above (the "Saved ✓" copy) was also addressed there (honest "Saved to this session ✓" wording), though the underlying lack of durable persistence is unchanged and out of scope for this prototype, as intended. Finding 3 above (no access control) remains unaddressed and out of scope for the same reason. This update is appended rather than edited into the findings above so the original review stays an honest record of what was and wasn't caught at the time.

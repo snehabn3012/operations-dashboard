@@ -115,3 +115,55 @@ describe("ConfigurationPanel: save conflict", () => {
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 });
+
+describe("ConfigurationPanel: save confirmation copy", () => {
+  it("does not claim durable persistence -- there is no backend behind this mock", async () => {
+    render(
+      <Provider store={makeStore()}>
+        <ConfigurationPanel />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByTestId("canvas-card").length).toBe(18));
+
+    screen.getAllByTestId("canvas-card")[0].click();
+    const visibleCheckbox = (await screen.findByLabelText("Visible on dashboard")) as HTMLInputElement;
+    visibleCheckbox.click();
+
+    screen.getByRole("button", { name: "Save Configuration" }).click();
+
+    const badge = await screen.findByText("Saved to this session ✓", {}, { timeout: 5000 });
+    // A bare "Saved ✓" would misrepresent this as durably persisted; it
+    // isn't -- configStore is an in-memory, per-tab store with no backend.
+    expect(badge.textContent).not.toBe("Saved ✓");
+  });
+
+  it("edits made while a save is still in flight are not silently discarded when it resolves", async () => {
+    render(
+      <Provider store={makeStore()}>
+        <ConfigurationPanel />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByTestId("canvas-card").length).toBe(18));
+
+    screen.getAllByTestId("canvas-card")[0].click();
+    (await screen.findByLabelText("Visible on dashboard")).click();
+    screen.getByRole("button", { name: "Save Configuration" }).click();
+
+    // Immediately, while the mock API's save latency (300-700ms) is still
+    // pending, edit a second widget.
+    screen.getAllByTestId("canvas-card")[1].click();
+    const secondCheckbox = (await screen.findByLabelText("Visible on dashboard")) as HTMLInputElement;
+    secondCheckbox.click();
+    expect(secondCheckbox.checked).toBe(false);
+
+    // Let the first save resolve.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    // The mid-flight edit must have survived -- this reproduces a real bug
+    // where saveDraftConfigSucceeded unconditionally overwrote the draft.
+    expect((screen.getByLabelText("Visible on dashboard") as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+});
