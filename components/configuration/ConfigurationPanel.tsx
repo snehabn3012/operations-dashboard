@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   DndContext,
   DragEndEvent,
@@ -16,6 +17,7 @@ import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import AvailableWidgetsPanel from "@/components/configuration/AvailableWidgetsPanel";
 import ConfigDrawer from "@/components/configuration/ConfigDrawer";
 import DashboardCanvas from "@/components/configuration/DashboardCanvas";
+import DashboardFiltersPanel from "@/components/configuration/DashboardFiltersPanel";
 import RoleSelector from "@/components/configuration/RoleSelector";
 import { getDefaultConfigForRole } from "@/config/dashboardConfig";
 import { WidgetTemplate } from "@/config/widgetPalette";
@@ -64,6 +66,7 @@ export default function ConfigurationPanel() {
   const [updateConfig, { isLoading: isSaving }] = useUpdateDashboardConfigMutation();
   const [justSaved, setJustSaved] = useState(false);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
 
@@ -129,6 +132,20 @@ export default function ConfigurationPanel() {
     const latest = await refetchConfig();
     if (latest.data) dispatch(loadDraftConfig(latest.data));
     setSaveConflict(false);
+  };
+
+  const handleCopyLink = async () => {
+    if (!draftConfig) return;
+    const url = `${window.location.origin}/dashboard/${draftConfig.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // Clipboard access can fail (permissions, insecure context) -- the link
+      // text itself is still visible and selectable either way, so this is a
+      // silent no-op rather than an error state.
+    }
   };
 
   // Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z (or Ctrl+Y) trigger undo/redo, except while
@@ -241,6 +258,16 @@ export default function ConfigurationPanel() {
         </div>
       </div>
 
+      {draftConfig && (
+        <div className={styles.shareRow}>
+          <span className={styles.shareLabel}>Shareable link:</span>
+          <Link className={styles.shareLink} href={`/dashboard/${draftConfig.id}`}>{`/dashboard/${draftConfig.id}`}</Link>
+          <button type="button" className={styles.copyButton} onClick={handleCopyLink}>
+            {linkCopied ? "Copied ✓" : "Copy"}
+          </button>
+        </div>
+      )}
+
       {saveConflict && (
         <div className={styles.conflictBanner} role="alert">
           <span>
@@ -250,6 +277,10 @@ export default function ConfigurationPanel() {
             Reload Latest
           </button>
         </div>
+      )}
+
+      {draftConfig && (
+        <DashboardFiltersPanel dashboardFilters={draftConfig.dashboardFilters} widgets={draftConfig.widgets} />
       )}
 
       {/*
@@ -273,6 +304,7 @@ export default function ConfigurationPanel() {
             ) : (
               <DashboardCanvas
                 widgets={draftConfig.widgets}
+                dashboardFilters={draftConfig.dashboardFilters}
                 selectedWidgetId={selectedWidgetId}
                 onSelectWidget={setSelectedWidgetId}
               />

@@ -79,6 +79,17 @@ export const dashboardApi = createApi({
       },
       providesTags: (_result, _error, role) => [{ type: "Config", id: role }],
     }),
+    /** Resolves a dashboard directly by its stable id -- the /dashboard/[id] shareable link, independent of "currently selected role." */
+    getDashboardConfigById: builder.query<DashboardConfig, string>({
+      queryFn: async (dashboardId) => {
+        try {
+          return { data: await mockApi.getDashboardConfigById(dashboardId) };
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : "Failed to load dashboard" };
+        }
+      },
+      providesTags: (_result, _error, dashboardId) => [{ type: "Config", id: dashboardId }],
+    }),
     updateDashboardConfig: builder.mutation<DashboardConfig, { role: Role; config: DashboardConfig }>({
       queryFn: async ({ role, config }) => {
         try {
@@ -113,6 +124,7 @@ export const dashboardApi = createApi({
             if (!seen.has(widgetModule.id)) currentCache.modules.push(widgetModule);
           }
         }
+        currentCache.dashboardFilters = newPage.dashboardFilters;
         currentCache.page = newPage.page;
         currentCache.pageSize = newPage.pageSize;
         currentCache.total = newPage.total;
@@ -121,6 +133,36 @@ export const dashboardApi = createApi({
       forceRefetch: ({ currentArg, previousArg }) =>
         currentArg?.page !== previousArg?.page || currentArg?.role !== previousArg?.role,
       providesTags: (_result, _error, arg) => [{ type: "Modules", id: arg.role }],
+    }),
+
+    /** Same pagination as getDashboardModules, but keyed by a dashboard's stable id instead of role -- what /dashboard/[id] uses. */
+    getDashboardModulesById: builder.query<ModulesPage, { dashboardId: string; page: number; limit: number }>({
+      queryFn: async ({ dashboardId, page, limit }) => {
+        try {
+          return { data: await mockApi.getDashboardModulesById(dashboardId, page, limit) };
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : "Failed to load modules" };
+        }
+      },
+      serializeQueryArgs: ({ queryArgs }) => queryArgs.dashboardId,
+      merge: (currentCache, newPage) => {
+        if (newPage.page === 1) {
+          currentCache.modules = newPage.modules;
+        } else {
+          const seen = new Set(currentCache.modules.map((m) => m.id));
+          for (const widgetModule of newPage.modules) {
+            if (!seen.has(widgetModule.id)) currentCache.modules.push(widgetModule);
+          }
+        }
+        currentCache.dashboardFilters = newPage.dashboardFilters;
+        currentCache.page = newPage.page;
+        currentCache.pageSize = newPage.pageSize;
+        currentCache.total = newPage.total;
+        currentCache.hasMore = newPage.hasMore;
+      },
+      forceRefetch: ({ currentArg, previousArg }) =>
+        currentArg?.page !== previousArg?.page || currentArg?.dashboardId !== previousArg?.dashboardId,
+      providesTags: (_result, _error, arg) => [{ type: "Modules", id: arg.dashboardId }],
     }),
   }),
 });
@@ -132,6 +174,8 @@ export const {
   useGetOrdersQuery,
   useGetPaymentsQuery,
   useGetDashboardConfigQuery,
+  useGetDashboardConfigByIdQuery,
   useUpdateDashboardConfigMutation,
   useGetDashboardModulesQuery,
+  useGetDashboardModulesByIdQuery,
 } = dashboardApi;

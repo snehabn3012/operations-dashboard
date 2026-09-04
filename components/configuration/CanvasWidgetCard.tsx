@@ -4,12 +4,14 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import WidgetRenderer from "@/components/dashboard/WidgetRenderer";
-import { WidgetConfig } from "@/types/dashboard";
+import { resolveEffectiveWidgetConfig } from "@/lib/dashboardFilters";
+import { DashboardFilterConfig, WidgetConfig } from "@/types/dashboard";
 
 import styles from "./CanvasWidgetCard.module.css";
 
 interface CanvasWidgetCardProps {
   widget: WidgetConfig;
+  dashboardFilters: DashboardFilterConfig[];
   isSelected: boolean;
   onSelect: (id: string) => void;
 }
@@ -22,7 +24,7 @@ interface CanvasWidgetCardProps {
  * removed now); drag it anywhere to reorder. A thin outline (not a border,
  * so it never shifts layout) marks the selected widget.
  */
-export default function CanvasWidgetCard({ widget, isSelected, onSelect }: CanvasWidgetCardProps) {
+export default function CanvasWidgetCard({ widget, dashboardFilters, isSelected, onSelect }: CanvasWidgetCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: widget.id,
     data: { type: "canvas-item" },
@@ -51,7 +53,7 @@ export default function CanvasWidgetCard({ widget, isSelected, onSelect }: Canva
       onClick={() => onSelect(widget.id)}
       {...dragProps}
     >
-      <WidgetRenderer config={widget} />
+      <WidgetRenderer config={resolveEffectiveWidgetConfig(widget, dashboardFilters)} />
     </div>
   );
 }

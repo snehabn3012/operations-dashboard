@@ -1,3 +1,6 @@
+/** Table/List widgets render at most this many rows -- past this, a visible "Showing N of M" notice is required rather than silently dropping the rest. */
+export const MAX_VISIBLE_ROWS = 8;
+
 const numberFormatter = new Intl.NumberFormat("en-US");
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",

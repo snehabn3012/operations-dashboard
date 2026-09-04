@@ -2,19 +2,18 @@
 
 import DashboardGrid from "@/components/dashboard/DashboardGrid";
 import LoadMoreSentinel from "@/components/dashboard/LoadMoreSentinel";
-import { useInfiniteModules } from "@/hooks/useInfiniteModules";
-import { Role } from "@/types/dashboard";
+import { useInfiniteModulesById } from "@/hooks/useInfiniteModulesById";
 
 import styles from "./ModuleLoader.module.css";
 
-interface ModuleLoaderProps {
-  role: Role;
+interface ModuleLoaderByIdProps {
+  dashboardId: string;
 }
 
-/** Drives the dashboard's scroll-based pagination: loads page 1 automatically, then loads more as the sentinel comes into view. */
-export default function ModuleLoader({ role }: ModuleLoaderProps) {
+/** Same scroll-based pagination as ModuleLoader, but for the id-addressed /dashboard/[id] route. */
+export default function ModuleLoaderById({ dashboardId }: ModuleLoaderByIdProps) {
   const { modules, dashboardFilters, isInitialLoading, isFetchingMore, hasMoreError, hasMore, loadMore, retry } =
-    useInfiniteModules(role);
+    useInfiniteModulesById(dashboardId);
 
   if (isInitialLoading) {
     return (
@@ -27,7 +26,7 @@ export default function ModuleLoader({ role }: ModuleLoaderProps) {
   }
 
   if (modules.length === 0) {
-    return <div className={styles.emptyState}>No modules are configured for this role yet.</div>;
+    return <div className={styles.emptyState}>No modules are configured on this dashboard yet.</div>;
   }
 
   return (

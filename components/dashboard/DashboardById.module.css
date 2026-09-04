@@ -1,0 +1,16 @@
+.notFound {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.notFoundTitle {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 8px;
+}

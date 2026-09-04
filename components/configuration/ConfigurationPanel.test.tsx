@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ConfigurationPanel from "@/components/configuration/ConfigurationPanel";
 import { getDashboardConfig, updateDashboardConfig } from "@/data/mockApi";
@@ -197,5 +197,29 @@ describe("ConfigurationPanel: save confirmation copy", () => {
     // where saveDraftConfigSucceeded unconditionally overwrote the draft.
     expect((screen.getByLabelText("Visible on dashboard") as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+});
+
+describe("ConfigurationPanel: shareable link", () => {
+  it("shows a link to /dashboard/[id] and copies the full URL to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    render(
+      <Provider store={makeStore()}>
+        <ConfigurationPanel />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByTestId("canvas-card").length).toBe(18));
+
+    const link = screen.getByText(/^\/dashboard\//) as HTMLAnchorElement;
+    const path = link.textContent!;
+    expect(link.getAttribute("href")).toBe(path);
+
+    screen.getByRole("button", { name: "Copy" }).click();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copied ✓" })).toBeTruthy());
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}${path}`);
   });
 });

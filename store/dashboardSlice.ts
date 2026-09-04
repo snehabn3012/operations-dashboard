@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 import {
   DashboardConfig,
+  DashboardFilterConfig,
   DataSourceKey,
   Role,
   WidgetConfig,
@@ -10,6 +11,12 @@ import {
   WidgetSort,
   WidgetType,
 } from "@/types/dashboard";
+
+/** What undo/redo actually snapshots: everything the user edits on the draft other than server relationship metadata (role/version/revision/updatedAt). */
+interface DraftSnapshot {
+  widgets: WidgetConfig[];
+  dashboardFilters: DashboardFilterConfig[];
+}
 
 /**
  * Client/UI state only. Server data (customers, transactions, revenue,
@@ -25,14 +32,15 @@ export interface DashboardUiState {
   isDirty: boolean;
   /**
    * Local undo/redo history for the current draft, as snapshots of
-   * `draftConfig.widgets` only -- role/version/updatedAt/revision are server
-   * relationship metadata, not user-editable content, so undo/redo never
-   * touches them. `past` is oldest-first; `future` is most-recently-undone
-   * first. Cleared whenever the draft's baseline changes out from under the
-   * user (a fresh load, a role switch) rather than by their own edit.
+   * `draftConfig.widgets` and `draftConfig.dashboardFilters` --
+   * role/version/updatedAt/revision are server relationship metadata, not
+   * user-editable content, so undo/redo never touches them. `past` is
+   * oldest-first; `future` is most-recently-undone first. Cleared whenever
+   * the draft's baseline changes out from under the user (a fresh load, a
+   * role switch) rather than by their own edit.
    */
-  past: WidgetConfig[][];
-  future: WidgetConfig[][];
+  past: DraftSnapshot[];
+  future: DraftSnapshot[];
   /** Which widget's title is mid-edit, so consecutive keystrokes coalesce into one undo step instead of one per character. Cleared by any other action. */
   coalescingTitleWidgetId: string | null;
   /**
@@ -66,8 +74,8 @@ function resyncOrder(widgets: WidgetConfig[]) {
   });
 }
 
-function snapshotWidgets(widgets: WidgetConfig[]): WidgetConfig[] {
-  return JSON.parse(JSON.stringify(widgets));
+function snapshotDraft(draftConfig: DashboardConfig): DraftSnapshot {
+  return JSON.parse(JSON.stringify({ widgets: draftConfig.widgets, dashboardFilters: draftConfig.dashboardFilters }));
 }
 
 /** Caps local undo/redo history so a very long editing session can't grow it unboundedly; oldest steps are dropped first. `future` needs no separate cap -- it can only grow by moving entries out of `past` via undo, so it's already bounded by this. */
@@ -77,10 +85,10 @@ function bumpEditGeneration(state: DashboardUiState) {
   state.editGeneration += 1;
 }
 
-/** Records an undo step for the widget-content change about to happen, and invalidates any redo path (a fresh edit after an undo discards the old future, rather than branching). Call before mutating draftConfig.widgets. */
+/** Records an undo step for the change about to happen (widgets or dashboard filters), and invalidates any redo path (a fresh edit after an undo discards the old future, rather than branching). Call before mutating draftConfig.widgets/dashboardFilters. */
 function pushHistory(state: DashboardUiState) {
   if (!state.draftConfig) return;
-  state.past.push(snapshotWidgets(state.draftConfig.widgets));
+  state.past.push(snapshotDraft(state.draftConfig));
   if (state.past.length > MAX_HISTORY) {
     state.past.shift();
   }
@@ -156,8 +164,9 @@ const dashboardSlice = createSlice({
     undo(state) {
       if (!state.draftConfig || state.past.length === 0) return;
       const previous = state.past.pop()!;
-      state.future.push(snapshotWidgets(state.draftConfig.widgets));
-      state.draftConfig.widgets = previous;
+      state.future.push(snapshotDraft(state.draftConfig));
+      state.draftConfig.widgets = previous.widgets;
+      state.draftConfig.dashboardFilters = previous.dashboardFilters;
       state.isDirty = true;
       state.coalescingTitleWidgetId = null;
       bumpEditGeneration(state);
@@ -165,8 +174,9 @@ const dashboardSlice = createSlice({
     redo(state) {
       if (!state.draftConfig || state.future.length === 0) return;
       const next = state.future.pop()!;
-      state.past.push(snapshotWidgets(state.draftConfig.widgets));
-      state.draftConfig.widgets = next;
+      state.past.push(snapshotDraft(state.draftConfig));
+      state.draftConfig.widgets = next.widgets;
+      state.draftConfig.dashboardFilters = next.dashboardFilters;
       state.isDirty = true;
       state.coalescingTitleWidgetId = null;
       bumpEditGeneration(state);
@@ -205,6 +215,8 @@ const dashboardSlice = createSlice({
       widget.dataSource = action.payload.dataSource;
       widget.filter = undefined;
       widget.sort = undefined;
+      widget.fields = undefined;
+      widget.groupBy = undefined;
       state.isDirty = true;
     },
     updateWidgetFilter(state, action: PayloadAction<{ id: string; filter: WidgetFilter | undefined }>) {
@@ -233,6 +245,22 @@ const dashboardSlice = createSlice({
       if (!widget) return;
       pushHistory(state);
       widget.layout = action.payload.layout;
+      state.isDirty = true;
+    },
+    /** Table/List: which columns to show, and in what order. Empty array means "all columns." */
+    updateWidgetFields(state, action: PayloadAction<{ id: string; fields: string[] }>) {
+      const widget = findWidget(state, action.payload.id);
+      if (!widget) return;
+      pushHistory(state);
+      widget.fields = action.payload.fields;
+      state.isDirty = true;
+    },
+    /** Bar/Line charts: bucket by this field instead of by calendar month. undefined restores the default month bucketing. */
+    updateWidgetGroupBy(state, action: PayloadAction<{ id: string; groupBy: string | undefined }>) {
+      const widget = findWidget(state, action.payload.id);
+      if (!widget) return;
+      pushHistory(state);
+      widget.groupBy = action.payload.groupBy;
       state.isDirty = true;
     },
     /** Dropped from the Available Widgets palette onto the canvas -- inserted at a specific position (or appended when index is omitted). */
@@ -268,6 +296,35 @@ const dashboardSlice = createSlice({
       state.draftConfig!.widgets = reordered;
       state.isDirty = true;
     },
+    /** Adds a new dashboard-level filter, initially in scope for no widgets -- scope is set explicitly afterward via toggleDashboardFilterWidget, per the requirement that scope be explicit rather than implicit. */
+    addDashboardFilter(state, action: PayloadAction<{ filter: DashboardFilterConfig }>) {
+      if (!state.draftConfig) return;
+      pushHistory(state);
+      state.draftConfig.dashboardFilters.push(action.payload.filter);
+      state.isDirty = true;
+    },
+    removeDashboardFilter(state, action: PayloadAction<{ id: string }>) {
+      const filters = state.draftConfig?.dashboardFilters;
+      if (!filters) return;
+      const index = filters.findIndex((f) => f.id === action.payload.id);
+      if (index === -1) return;
+      pushHistory(state);
+      filters.splice(index, 1);
+      state.isDirty = true;
+    },
+    /** Toggles whether a specific placed widget is in scope for a dashboard-level filter -- this is the "explicit scope" the filter's appliesToWidgetIds list is built from. */
+    toggleDashboardFilterWidget(state, action: PayloadAction<{ filterId: string; widgetId: string }>) {
+      const filter = state.draftConfig?.dashboardFilters.find((f) => f.id === action.payload.filterId);
+      if (!filter) return;
+      pushHistory(state);
+      const index = filter.appliesToWidgetIds.indexOf(action.payload.widgetId);
+      if (index === -1) {
+        filter.appliesToWidgetIds.push(action.payload.widgetId);
+      } else {
+        filter.appliesToWidgetIds.splice(index, 1);
+      }
+      state.isDirty = true;
+    },
   },
 });
 
@@ -286,9 +343,14 @@ export const {
   updateWidgetSort,
   updateWidgetMetric,
   updateWidgetLayout,
+  updateWidgetFields,
+  updateWidgetGroupBy,
   addWidget,
   removeWidget,
   reorderWidgets,
+  addDashboardFilter,
+  removeDashboardFilter,
+  toggleDashboardFilterWidget,
 } = dashboardSlice.actions;
 
 export default dashboardSlice.reducer;

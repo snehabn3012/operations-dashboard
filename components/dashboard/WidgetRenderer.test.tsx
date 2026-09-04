@@ -84,4 +84,64 @@ describe("WidgetRenderer: real data fetching states", () => {
       expect(screen.queryAllByRole("status").length).toBe(0); // both settled, none stuck loading
     }, { timeout: 3000 });
   });
+
+  /**
+   * Reproduces a bug found live: RTK Query keeps serving a query's *previous*
+   * args' data (isFetching: true, isLoading: false) while a newly-changed
+   * args combination is still in flight, to avoid flicker on a plain
+   * revalidation. But this widget's title/meta caption is driven by the same
+   * `config` prop in the same render, so it updates to the new filter's label
+   * immediately -- if WidgetRenderer trusted that stale `data` because it
+   * only checked `isLoading`, the widget would show the *old* filter's rows
+   * under the *new* filter's label, with no loading indicator, for as long
+   * as the fetch takes. Verified live against the running app with two
+   * dashboard-level filters on the same data source (DESIGN.md section 18);
+   * this reproduces the same class of race deterministically in-process.
+   */
+  it("never shows one filter's data under a different filter's label: a filter change either shows a loading state or the new filter's own data, never a stale mix", async () => {
+    const store = makeStore();
+    const widget: WidgetConfig = {
+      ...BASE_WIDGET,
+      id: "payments-race",
+      dataSource: "payments",
+      widgetType: "table",
+      filter: { value: "successful", label: "Successful" },
+    };
+
+    const { rerender } = render(
+      <Provider store={store}>
+        <WidgetRenderer config={widget} />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 3000 });
+    const initialStatuses = screen.getAllByRole("cell").filter((c) => c.getAttribute("data-key") === "status");
+    expect(initialStatuses.length).toBeGreaterThan(0);
+    for (const cell of initialStatuses) expect(cell.textContent).toBe("successful");
+
+    // Switch to a filter value this store has never fetched before -- the
+    // exact condition that exposed the race (a genuinely new args key, not
+    // one some other already-rendered widget happened to have pre-cached).
+    const changed: WidgetConfig = { ...widget, filter: { value: "failed", label: "Failed" } };
+    rerender(
+      <Provider store={store}>
+        <WidgetRenderer config={changed} />
+      </Provider>,
+    );
+
+    // Check immediately (no await) -- this is the exact instant the original
+    // bug occurred: label already updated, data not yet caught up.
+    const statusCellsNow = screen.queryAllByRole("cell").filter((c) => c.getAttribute("data-key") === "status");
+    const isLoadingNow = Boolean(screen.queryByRole("status"));
+    if (!isLoadingNow) {
+      // Not showing a loading state -- so whatever data IS showing must
+      // already be the new filter's, never the old filter's leftovers.
+      for (const cell of statusCellsNow) expect(cell.textContent).not.toBe("successful");
+    }
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 3000 });
+    const finalStatuses = screen.getAllByRole("cell").filter((c) => c.getAttribute("data-key") === "status");
+    expect(finalStatuses.length).toBeGreaterThan(0);
+    for (const cell of finalStatuses) expect(cell.textContent).toBe("failed");
+  });
 });

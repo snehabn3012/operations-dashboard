@@ -9,12 +9,13 @@ import CanvasWidgetCard from "@/components/configuration/CanvasWidgetCard";
 // way /dashboard will -- one grid definition, not two that can drift apart.
 import gridStyles from "@/components/dashboard/DashboardGrid.module.css";
 import { clampHeightBucket, nearestWidthBucket } from "@/lib/layoutBuckets";
-import { WidgetConfig } from "@/types/dashboard";
+import { DashboardFilterConfig, WidgetConfig } from "@/types/dashboard";
 
 import styles from "./DashboardCanvas.module.css";
 
 interface DashboardCanvasProps {
   widgets: WidgetConfig[];
+  dashboardFilters: DashboardFilterConfig[];
   selectedWidgetId: string | null;
   onSelectWidget: (id: string) => void;
 }
@@ -26,7 +27,7 @@ interface DashboardCanvasProps {
  * palette widget can be dropped onto blank canvas, not just onto an
  * existing card.
  */
-export default function DashboardCanvas({ widgets, selectedWidgetId, onSelectWidget }: DashboardCanvasProps) {
+export default function DashboardCanvas({ widgets, dashboardFilters, selectedWidgetId, onSelectWidget }: DashboardCanvasProps) {
   const ordered = [...widgets].sort((a, b) => a.order - b.order);
   const { setNodeRef, isOver } = useDroppable({ id: "canvas-root", data: { type: "canvas" } });
 
@@ -44,7 +45,12 @@ export default function DashboardCanvas({ widgets, selectedWidgetId, onSelectWid
                   gridStyles[`row-${clampHeightBucket(widget.layout.height)}`]
                 }`}
               >
-                <CanvasWidgetCard widget={widget} isSelected={widget.id === selectedWidgetId} onSelect={onSelectWidget} />
+                <CanvasWidgetCard
+                  widget={widget}
+                  dashboardFilters={dashboardFilters}
+                  isSelected={widget.id === selectedWidgetId}
+                  onSelect={onSelectWidget}
+                />
               </div>
             ))}
           </div>

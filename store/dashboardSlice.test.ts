@@ -30,7 +30,15 @@ function makeWidget(overrides: Partial<WidgetConfig> & Pick<WidgetConfig, "id" |
 }
 
 function makeConfig(widgets: WidgetConfig[]): DashboardConfig {
-  return { role: "financeManager", version: 2, widgets, updatedAt: "2026-01-01T00:00:00.000Z", revision: 0 };
+  return {
+    id: "test-dashboard",
+    role: "financeManager",
+    version: 2,
+    widgets,
+    dashboardFilters: [],
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    revision: 0,
+  };
 }
 
 const initialState: DashboardUiState = {

@@ -2,7 +2,9 @@
 
 import {
   DATA_SOURCE_OPTIONS,
+  FIELD_OPTIONS_BY_SOURCE,
   FILTER_OPTIONS_BY_SOURCE,
+  GROUP_BY_OPTIONS_BY_SOURCE,
   METRIC_OPTIONS,
   SORT_OPTIONS_BY_SOURCE,
   WIDGET_TYPE_OPTIONS,
@@ -11,7 +13,9 @@ import { HEIGHT_OPTIONS, WIDTH_OPTIONS } from "@/config/layoutOptions";
 import {
   removeWidget,
   updateWidgetDataSource,
+  updateWidgetFields,
   updateWidgetFilter,
+  updateWidgetGroupBy,
   updateWidgetLayout,
   updateWidgetMetric,
   updateWidgetSort,
@@ -46,6 +50,24 @@ const SHOWS_SORT: Record<WidgetType, boolean> = {
   list: true,
 };
 
+/** Table/List: which columns to show and in what order. */
+const SHOWS_FIELDS: Record<WidgetType, boolean> = {
+  kpi: false,
+  barChart: false,
+  lineChart: false,
+  table: true,
+  list: true,
+};
+
+/** Bar/Line charts: bucket by a field instead of by calendar month. */
+const SHOWS_GROUP_BY: Record<WidgetType, boolean> = {
+  kpi: false,
+  barChart: true,
+  lineChart: true,
+  table: false,
+  list: false,
+};
+
 interface ConfigDrawerProps {
   widget: WidgetConfig;
   onClose: () => void;
@@ -56,6 +78,17 @@ export default function ConfigDrawer({ widget, onClose }: ConfigDrawerProps) {
   const dispatch = useAppDispatch();
   const filterOptions = FILTER_OPTIONS_BY_SOURCE[widget.dataSource] ?? [];
   const sortOptions = SORT_OPTIONS_BY_SOURCE[widget.dataSource] ?? [];
+  const fieldOptions = FIELD_OPTIONS_BY_SOURCE[widget.dataSource] ?? [];
+  const groupByOptions = GROUP_BY_OPTIONS_BY_SOURCE[widget.dataSource] ?? [];
+  // Unset (or empty) `fields` means "all columns" -- treat every option as checked in that case.
+  const selectedFields = widget.fields && widget.fields.length > 0 ? widget.fields : fieldOptions.map((f) => f.key);
+
+  const toggleField = (key: string, checked: boolean) => {
+    const next = checked ? [...selectedFields, key] : selectedFields.filter((f) => f !== key);
+    // Selecting every option is equivalent to "unset" (all columns); store it
+    // that way so removing a column later still has a full list to work from.
+    dispatch(updateWidgetFields({ id: widget.id, fields: next.length === fieldOptions.length ? [] : next }));
+  };
 
   const handleRemove = () => {
     dispatch(removeWidget({ id: widget.id }));
@@ -189,6 +222,47 @@ export default function ConfigDrawer({ widget, onClose }: ConfigDrawerProps) {
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {SHOWS_GROUP_BY[widget.widgetType] && groupByOptions.length > 0 && (
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor="cfg-groupby">
+              Group By
+            </label>
+            <select
+              id="cfg-groupby"
+              className={styles.select}
+              value={widget.groupBy ?? ""}
+              onChange={(e) =>
+                dispatch(updateWidgetGroupBy({ id: widget.id, groupBy: e.target.value || undefined }))
+              }
+            >
+              <option value="">Month (default)</option>
+              {groupByOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {SHOWS_FIELDS[widget.widgetType] && fieldOptions.length > 0 && (
+          <div className={styles.field}>
+            <span className={styles.label}>Fields</span>
+            <div className={styles.fieldsList}>
+              {fieldOptions.map((opt) => (
+                <label key={opt.key} className={styles.fieldCheckboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={selectedFields.includes(opt.key)}
+                    onChange={(e) => toggleField(opt.key, e.target.checked)}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
           </div>
         )}
 

@@ -1,4 +1,5 @@
 import { dataSourceRegistry } from "@/components/dashboard/dataSources";
+import WidgetErrorBoundary from "@/components/dashboard/WidgetErrorBoundary";
 import WidgetShell from "@/components/dashboard/WidgetShell";
 import UnsupportedWidget from "@/components/widgets/UnsupportedWidget";
 import { widgetRegistry } from "@/config/widgetRegistry";
@@ -40,14 +41,29 @@ export default function WidgetRenderer({ config }: WidgetRendererProps) {
   }
 
   return (
-    <DataSource args={{ filter: config.filter, sort: config.sort }}>
-      {({ data, isLoading, isError, errorMessage, refetch }) => {
+    <DataSource args={{ filter: config.filter, sort: config.sort, groupBy: config.groupBy }}>
+      {({ data, isLoading, isFetching, isError, errorMessage, refetch }) => {
         const isEmpty = Boolean(data) && data!.rows.length === 0 && data!.series.length === 0;
-        const state = isLoading ? "loading" : isError ? "error" : isEmpty ? "empty" : "success";
+        // RTK Query keeps serving the *previous* args' data (with isFetching:
+        // true, isLoading: false) while a query for newly-changed args is in
+        // flight, to avoid flicker on a plain revalidation. But this widget's
+        // config (title/meta) has already moved on to the new args by this
+        // render, so treating that stale `data` as "success" would show rows
+        // that don't match the filter/sort this widget claims to be showing
+        // -- exactly the "configuration it did not actually apply" case this
+        // app's own design promises never to display silently. Reproduced
+        // live: switching a dashboard-level filter's scope showed the old
+        // filter's rows under the new filter's label for ~300-900ms with no
+        // loading indicator, before this fix.
+        const state = isLoading || isFetching ? "loading" : isError ? "error" : isEmpty ? "empty" : "success";
 
         return (
           <WidgetShell title={config.title} meta={meta} state={state} errorMessage={errorMessage} onRetry={refetch}>
-            {data && <WidgetComponent config={config} data={data} />}
+            {data && (
+              <WidgetErrorBoundary resetKey={`${JSON.stringify(config)}:${data.generatedAt}`}>
+                <WidgetComponent config={config} data={data} />
+              </WidgetErrorBoundary>
+            )}
           </WidgetShell>
         );
       }}

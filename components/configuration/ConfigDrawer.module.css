@@ -118,6 +118,21 @@
   cursor: pointer;
 }
 
+.fieldsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldCheckboxRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
 .removeButton {
   border: 1px solid var(--color-border);
   background: var(--color-surface);

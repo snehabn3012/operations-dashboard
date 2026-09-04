@@ -51,6 +51,7 @@ export function useInfiniteModules(role: Role) {
 
   return {
     modules: data?.modules ?? [],
+    dashboardFilters: data?.dashboardFilters ?? [],
     total: data?.total ?? 0,
     isInitialLoading,
     isFetchingMore,

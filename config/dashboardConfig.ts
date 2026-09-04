@@ -1,5 +1,6 @@
 import {
   DashboardConfig,
+  DataColumn,
   DataSourceKey,
   FilterOption,
   Role,
@@ -246,13 +247,88 @@ export function getDefaultConfigForRole(role: Role): DashboardConfig {
     });
 
   return {
+    id: crypto.randomUUID(),
     role,
     version: CURRENT_CONFIG_VERSION,
     widgets,
+    dashboardFilters: [],
     updatedAt: new Date().toISOString(),
     revision: 0,
   };
 }
+
+/**
+ * Canonical column definitions per data source -- also what data/mockApi.ts
+ * returns as `DataSourceResult.columns`, so there is exactly one place these
+ * are defined rather than two lists that can silently drift apart. Doubles
+ * as the field picker's option list for Table/List's `fields` config.
+ */
+export const FIELD_OPTIONS_BY_SOURCE: Record<DataSourceKey, DataColumn[]> = {
+  customers: [
+    { key: "name", label: "Name" },
+    { key: "email", label: "Email" },
+    { key: "status", label: "Status" },
+    { key: "segment", label: "Segment" },
+    { key: "totalSpent", label: "Total Spent" },
+  ],
+  transactions: [
+    { key: "id", label: "Transaction" },
+    { key: "customerName", label: "Customer" },
+    { key: "amount", label: "Amount" },
+    { key: "status", label: "Status" },
+    { key: "date", label: "Date" },
+  ],
+  revenue: [
+    { key: "label", label: "Month" },
+    { key: "value", label: "Revenue" },
+  ],
+  orders: [
+    { key: "id", label: "Order" },
+    { key: "customerName", label: "Customer" },
+    { key: "items", label: "Items" },
+    { key: "total", label: "Total" },
+    { key: "status", label: "Status" },
+    { key: "date", label: "Date" },
+  ],
+  payments: [
+    { key: "id", label: "Payment" },
+    { key: "customerName", label: "Customer" },
+    { key: "amount", label: "Amount" },
+    { key: "method", label: "Method" },
+    { key: "status", label: "Status" },
+    { key: "date", label: "Date" },
+  ],
+};
+
+/**
+ * Categorical fields a Bar/Line chart can group by, per data source, instead
+ * of the default calendar-month bucketing. Revenue has no such field -- it's
+ * inherently a monthly time series, so its chart stays month-based only.
+ * `customerName` is deliberately offered where available (up to 42 distinct
+ * values in the mock data) as a realistic high-cardinality case -- see
+ * lib/grouping.ts for how a group-by that produces many buckets is handled
+ * visibly rather than silently truncated.
+ */
+export const GROUP_BY_OPTIONS_BY_SOURCE: Record<DataSourceKey, { value: string; label: string }[]> = {
+  customers: [
+    { value: "status", label: "Status" },
+    { value: "segment", label: "Segment" },
+  ],
+  transactions: [
+    { value: "status", label: "Status" },
+    { value: "customerName", label: "Customer" },
+  ],
+  revenue: [],
+  orders: [
+    { value: "status", label: "Status" },
+    { value: "customerName", label: "Customer" },
+  ],
+  payments: [
+    { value: "status", label: "Status" },
+    { value: "method", label: "Method" },
+    { value: "customerName", label: "Customer" },
+  ],
+};
 
 export const FILTER_OPTIONS_BY_SOURCE: Record<DataSourceKey, FilterOption[]> = {
   customers: [

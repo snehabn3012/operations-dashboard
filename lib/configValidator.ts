@@ -1,5 +1,5 @@
 import { CURRENT_CONFIG_VERSION, getDefaultConfigForRole, MODULE_CATALOG } from "@/config/dashboardConfig";
-import { DashboardConfig, DataSourceKey, Role, WidgetConfig, WidgetLayout } from "@/types/dashboard";
+import { DashboardConfig, DashboardFilterConfig, DataSourceKey, Role, WidgetConfig, WidgetLayout } from "@/types/dashboard";
 
 const VALID_DATA_SOURCES: DataSourceKey[] = ["customers", "transactions", "revenue", "orders", "payments"];
 
@@ -101,8 +101,42 @@ function normalizeWidget(raw: unknown): WidgetConfig | null {
   if (typeof raw.metric === "string" && ["count", "sum", "average", "latest"].includes(raw.metric)) {
     widget.metric = raw.metric as WidgetConfig["metric"];
   }
+  if (Array.isArray(raw.fields) && raw.fields.every((f) => typeof f === "string")) {
+    widget.fields = raw.fields as string[];
+  }
+  if (typeof raw.groupBy === "string" && raw.groupBy.length > 0) {
+    widget.groupBy = raw.groupBy;
+  }
 
   return widget;
+}
+
+/**
+ * A dashboard filter is only kept if its data source is real and its scope
+ * only names widgets that actually exist in this config -- a stale widget id
+ * (the widget was since removed, or belonged to an older/different config
+ * entirely) is silently dropped from the scope rather than kept as a
+ * dangling reference. If that leaves the scope empty, the filter itself is
+ * still kept (it can be re-scoped later); only a missing/invalid
+ * dataSource or filter value drops the whole entry.
+ */
+function normalizeDashboardFilter(raw: unknown, validWidgetIds: Set<string>): DashboardFilterConfig | null {
+  if (!isRecord(raw)) return null;
+  const dataSource = typeof raw.dataSource === "string" ? raw.dataSource : undefined;
+  if (!dataSource || !VALID_DATA_SOURCES.includes(dataSource as DataSourceKey)) return null;
+  if (!isRecord(raw.filter) || typeof raw.filter.value !== "string" || typeof raw.filter.label !== "string") return null;
+
+  const id = typeof raw.id === "string" && raw.id.length > 0 ? raw.id : crypto.randomUUID();
+  const appliesToWidgetIds = Array.isArray(raw.appliesToWidgetIds)
+    ? raw.appliesToWidgetIds.filter((widgetId): widgetId is string => typeof widgetId === "string" && validWidgetIds.has(widgetId))
+    : [];
+
+  return {
+    id,
+    dataSource: dataSource as DataSourceKey,
+    filter: { value: raw.filter.value, label: raw.filter.label },
+    appliesToWidgetIds,
+  };
 }
 
 /**
@@ -144,10 +178,19 @@ export function validateDashboardConfig(raw: unknown, role: Role): DashboardConf
     w.order = i + 1;
   });
 
+  const validWidgetIds = new Set(widgets.map((w) => w.id));
+  const dashboardFilters = Array.isArray(migrated.dashboardFilters)
+    ? migrated.dashboardFilters
+        .map((f) => normalizeDashboardFilter(f, validWidgetIds))
+        .filter((f): f is DashboardFilterConfig => f !== null)
+    : [];
+
   return {
+    id: typeof raw.id === "string" && raw.id.length > 0 ? raw.id : crypto.randomUUID(),
     role,
     version: CURRENT_CONFIG_VERSION,
     widgets,
+    dashboardFilters,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date().toISOString(),
     revision: Number.isFinite(Number(raw.revision)) ? Number(raw.revision) : 0,
   };
