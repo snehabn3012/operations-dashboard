@@ -114,5 +114,6 @@ export function validateDashboardConfig(raw: unknown, role: Role): DashboardConf
     version: CURRENT_CONFIG_VERSION,
     widgets,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date().toISOString(),
+    revision: Number.isFinite(Number(raw.revision)) ? Number(raw.revision) : 0,
   };
 }

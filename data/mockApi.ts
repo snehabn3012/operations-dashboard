@@ -12,6 +12,7 @@ import {
   TransactionRecord,
 } from "@/data/mockData";
 import {
+  CONFIG_CONFLICT_ERROR,
   DashboardConfig,
   DataColumn,
   DataRow,
@@ -310,8 +311,21 @@ export async function getDashboardConfig(role: Role): Promise<DashboardConfig> {
   return delay(readConfig(role), 250, 600);
 }
 
+/**
+ * Optimistic concurrency check: the caller must be saving on top of the
+ * revision they last loaded. If someone else's save landed first, the stored
+ * revision has already moved on -- reject rather than silently clobbering
+ * their change. The check and the store write below happen with no `await`
+ * between them, so this is atomic with respect to other saves.
+ */
 export async function updateDashboardConfig(role: Role, config: DashboardConfig): Promise<DashboardConfig> {
+  const current = readConfig(role);
+  if (config.revision !== current.revision) {
+    throw new Error(CONFIG_CONFLICT_ERROR);
+  }
+
   const validated = validateDashboardConfig(config, role);
+  validated.revision = current.revision + 1;
   validated.updatedAt = new Date().toISOString();
   configStore.set(role, validated);
   return delay(JSON.parse(JSON.stringify(validated)), 300, 700);

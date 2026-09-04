@@ -230,6 +230,7 @@ export function getDefaultConfigForRole(role: Role): DashboardConfig {
     version: CURRENT_CONFIG_VERSION,
     widgets,
     updatedAt: new Date().toISOString(),
+    revision: 0,
   };
 }
 

@@ -19,10 +19,18 @@ import DashboardCanvas from "@/components/configuration/DashboardCanvas";
 import RoleSelector from "@/components/configuration/RoleSelector";
 import { getDefaultConfigForRole } from "@/config/dashboardConfig";
 import { WidgetTemplate } from "@/config/widgetPalette";
-import { addWidget, loadDraftConfig, reorderWidgets, resetDraftConfig, saveDraftConfigSucceeded } from "@/store/dashboardSlice";
+import {
+  addWidget,
+  loadDraftConfig,
+  redo,
+  reorderWidgets,
+  resetDraftConfig,
+  saveDraftConfigSucceeded,
+  undo,
+} from "@/store/dashboardSlice";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useGetDashboardConfigQuery, useUpdateDashboardConfigMutation } from "@/store/api/dashboardApi";
-import { WidgetConfig } from "@/types/dashboard";
+import { CONFIG_CONFLICT_ERROR, WidgetConfig } from "@/types/dashboard";
 
 import styles from "./ConfigurationPanel.module.css";
 
@@ -48,10 +56,13 @@ export default function ConfigurationPanel() {
   const selectedRole = useAppSelector((state) => state.dashboardUi.selectedRole);
   const draftConfig = useAppSelector((state) => state.dashboardUi.draftConfig);
   const isDirty = useAppSelector((state) => state.dashboardUi.isDirty);
+  const canUndo = useAppSelector((state) => state.dashboardUi.past.length > 0);
+  const canRedo = useAppSelector((state) => state.dashboardUi.future.length > 0);
 
-  const { data: savedConfig, isLoading, isFetching } = useGetDashboardConfigQuery(selectedRole);
+  const { data: savedConfig, isLoading, isFetching, refetch: refetchConfig } = useGetDashboardConfigQuery(selectedRole);
   const [updateConfig, { isLoading: isSaving }] = useUpdateDashboardConfigMutation();
   const [justSaved, setJustSaved] = useState(false);
+  const [saveConflict, setSaveConflict] = useState(false);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
 
@@ -62,6 +73,7 @@ export default function ConfigurationPanel() {
   if (selectedRole !== trackedRole) {
     setTrackedRole(selectedRole);
     if (selectedWidgetId !== null) setSelectedWidgetId(null);
+    if (saveConflict) setSaveConflict(false);
   }
   if (selectedWidgetId && draftConfig && !draftConfig.widgets.some((w) => w.id === selectedWidgetId)) {
     setSelectedWidgetId(null);
@@ -77,27 +89,65 @@ export default function ConfigurationPanel() {
   // Seed the editable draft from the server the first time this role's
   // config becomes available. Once a draft exists we never silently
   // overwrite it with a background refetch -- only Save/Reset/role-change do.
+  // Must check savedConfig.role, not just its presence: right after a role
+  // switch, RTK Query briefly still returns the *previous* role's cached
+  // data while the new role's request is in flight, and seeding from that
+  // would lock the draft one role switch behind.
   useEffect(() => {
-    if (!draftConfig && savedConfig) {
+    if (!draftConfig && savedConfig && savedConfig.role === selectedRole) {
       dispatch(loadDraftConfig(savedConfig));
     }
-  }, [draftConfig, savedConfig, dispatch]);
+  }, [draftConfig, savedConfig, selectedRole, dispatch]);
 
   const handleSave = async () => {
     if (!draftConfig) return;
-    try {
-      const result = await updateConfig({ role: selectedRole, config: draftConfig }).unwrap();
-      dispatch(saveDraftConfigSucceeded(result));
-      setJustSaved(true);
-      setTimeout(() => setJustSaved(false), 2500);
-    } catch {
-      // updateConfig's rejected state is surfaced via isSaving/isError below if needed
+    const result = await updateConfig({ role: selectedRole, config: draftConfig });
+    if ("error" in result) {
+      if (result.error === CONFIG_CONFLICT_ERROR) setSaveConflict(true);
+      return;
     }
+    dispatch(saveDraftConfigSucceeded(result.data));
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 2500);
   };
 
+  // The reset target is a fresh default config, but it's still an edit made on
+  // top of whatever revision is currently loaded -- keep that revision so a
+  // reset-then-save isn't mistaken for a conflict with itself.
   const handleReset = () => {
-    dispatch(resetDraftConfig(getDefaultConfigForRole(selectedRole)));
+    dispatch(resetDraftConfig({ ...getDefaultConfigForRole(selectedRole), revision: draftConfig?.revision ?? 0 }));
   };
+
+  const handleReloadLatest = async () => {
+    const latest = await refetchConfig();
+    if (latest.data) dispatch(loadDraftConfig(latest.data));
+    setSaveConflict(false);
+  };
+
+  // Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z (or Ctrl+Y) trigger undo/redo, except while
+  // focus is in a text field or dropdown -- otherwise this would hijack a
+  // browser's native undo inside the widget title input, or interfere with
+  // interacting with a <select>.
+  useEffect(() => {
+    function isEditingField(el: Element | null): boolean {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable;
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || isEditingField(document.activeElement)) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        dispatch(undo());
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        dispatch(redo());
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dispatch]);
 
   const handleAddFromPalette = (template: WidgetTemplate, atIndex?: number) => {
     dispatch(addWidget({ widget: widgetFromTemplate(template), atIndex }));
@@ -145,6 +195,24 @@ export default function ConfigurationPanel() {
         <div className={styles.actions}>
           {isDirty && <span className={styles.dirtyBadge}>Unsaved changes</span>}
           {justSaved && !isDirty && <span className={styles.savedBadge}>Saved ✓</span>}
+          <button
+            type="button"
+            className={styles.button}
+            onClick={() => dispatch(undo())}
+            disabled={!canUndo}
+            title="Undo (Ctrl/Cmd+Z)"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className={styles.button}
+            onClick={() => dispatch(redo())}
+            disabled={!canRedo}
+            title="Redo (Ctrl/Cmd+Shift+Z)"
+          >
+            Redo
+          </button>
           <button type="button" className={styles.button} onClick={handleReset} disabled={!draftConfig}>
             Reset
           </button>
@@ -158,6 +226,17 @@ export default function ConfigurationPanel() {
           </button>
         </div>
       </div>
+
+      {saveConflict && (
+        <div className={styles.conflictBanner} role="alert">
+          <span>
+            This dashboard was changed by someone else since you loaded it. Your unsaved changes were not saved.
+          </span>
+          <button type="button" className={styles.button} onClick={handleReloadLatest}>
+            Reload Latest
+          </button>
+        </div>
+      )}
 
       {!draftConfig || (isLoading && !isFetching) ? (
         <div className={styles.loading}>Loading configuration...</div>

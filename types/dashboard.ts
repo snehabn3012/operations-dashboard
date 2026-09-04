@@ -64,6 +64,8 @@ export interface DashboardConfig {
   version: number;
   widgets: WidgetConfig[];
   updatedAt: string;
+  /** Edit generation, bumped by the server on every successful save. A save whose `revision` doesn't match the currently stored config's is a stale/conflicting edit (see updateDashboardConfig). */
+  revision: number;
 }
 
 export interface SeriesPoint {
@@ -117,3 +119,6 @@ export interface WidgetContentProps {
 }
 
 export const SIMULATE_ERROR_VALUE = "__simulate_error__";
+
+/** Thrown/returned by updateDashboardConfig when the save's `revision` doesn't match what's currently stored -- someone else saved changes to this role's dashboard first. */
+export const CONFIG_CONFLICT_ERROR = "CONFIG_CONFLICT";
