@@ -1,70 +1,359 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 @AGENTS.md
 
 ## Commands
 
-- `npm run dev` — start the dev server (Turbopack)
-- `npm run build` — production build
-- `npm run start` — run a production build
-- `npm run lint` — ESLint (flat config, `eslint-config-next` core-web-vitals + typescript)
+```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+npx tsc --noEmit
+```
 
-There is no test suite or type-check script configured. Use `npx tsc --noEmit` to type-check manually; `tsconfig.tsbuildinfo`/`.next` are build artifacts, not sources of truth.
+## Tech Stack
 
-## Project goal
+Use the existing stack. Do not replace these technologies:
 
-This is a prototype built from a spec ("Build a Configuration-Driven Operations Dashboard") whose non-negotiable principle is:
+* Next.js App Router
+* React
+* TypeScript
+* Redux Toolkit
+* RTK Query
+* Recharts
+* CSS Modules + CSS Grid
+* @dnd-kit for drag and drop
+* IntersectionObserver for infinite scroll
 
-> Data, presentation, layout, permissions, client state, server state, and module loading are separate concerns. The dashboard component must not need to change when a widget is hidden/shown, a widget's type changes, a role is added, a module is added, the layout changes, more pages load, or the mock API is replaced by a real backend.
+The application uses a mock API only. There is no real backend.
 
-Concretely, that means: never add an `if`/`switch` on `widgetType` or `dataSource` outside the two registries (see below); never hardcode a per-role dashboard; never give the `/configure` preview its own rendering path; and don't treat this as a place to "just quickly special-case" a widget or role.
+---
+
+## Project Goal
+
+This is a **configuration-driven Operations Dashboard**.
+
+The dashboard must be driven by configuration rather than hardcoded widgets or role-specific pages.
+
+The configuration controls:
+
+* Role
+* Widget visibility
+* Widget order
+* Widget type
+* Data source
+* Filters
+* Sorting
+* Metrics
+* Layout
+
+The dashboard should not need to change when new widgets, roles, layouts, or data sources are added.
+
+---
 
 ## Architecture
 
-Which widgets a role sees, in what order, with what filter/sort/metric, is data (`DashboardConfig`), not markup. Two pages read/write that data:
+Keep these concerns separate:
 
-- `/dashboard` (`components/dashboard/Dashboard.tsx`) — renders a role's *saved* config, paginated.
-- `/configure` (`components/configuration/ConfigurationPanel.tsx`) — a drag-and-drop builder (dnd-kit) that edits a *draft* of that config and can save it back. Its live preview is not a separate implementation — it's the same `WidgetRenderer`/registries as `/dashboard`, fed from `draftConfig` instead of the saved config.
+```text
+Configuration
+     ↓
+Validation
+     ↓
+Widget Renderer
+     ↓
+Widget Registry
+     ↓
+Data Source
+     ↓
+RTK Query
+     ↓
+Mock API
+```
 
-### No real backend
+### `/dashboard`
 
-`data/mockApi.ts` is the only place that touches "server" data (`data/mockData.ts` + an in-memory `Map<Role, DashboardConfig>` for saved configs, i.e. **not** `localStorage` — the spec explicitly rules out localStorage as the source of truth). Every function simulates latency (`delay()`) and can throw. `store/api/dashboardApi.ts` wraps each mock function in an RTK Query endpoint via `fakeBaseQuery`, so the rest of the app gets real caching/loading/error/invalidation semantics — swapping in a real HTTP backend later should only touch this one file's `queryFn`s.
+Renders the saved dashboard configuration.
 
-Selecting a filter option with value `SIMULATE_ERROR_VALUE` (`types/dashboard.ts`) deliberately throws in the mock API — this is the built-in way to exercise per-widget error states in the UI (see Independent widget states below).
+### `/configure`
 
-### Redux state split
+Provides the dashboard builder:
 
-- **`store/api/dashboardApi.ts`** (RTK Query) owns all server-shaped data: the five data sources (customers, transactions, revenue, orders, payments), `getDashboardConfig`/`updateDashboardConfig`, and paginated `getDashboardModules`.
-- **`store/dashboardSlice.ts`** owns UI-only state: `selectedRole` and a `draftConfig` (the in-progress, possibly-unsaved edit on `/configure`). The draft *is* the live preview — the canvas renders directly from `draftConfig`, nothing is duplicated for previewing.
-- Every widget-array mutation in the slice (`addWidget`, `removeWidget`, `reorderWidgets`) resyncs each widget's `order` field to its array index — `order` is the single source of truth for placement, so never write it independently elsewhere.
+* Select role
+* Browse widget catalogue
+* Drag widgets onto canvas
+* Reorder widgets
+* Remove widgets
+* Select a widget
+* Configure the selected widget
+* Preview changes
+* Save/reset configuration
 
-### Registry pattern (no switch/if-else on type)
+The preview must use the **same WidgetRenderer and registries** as `/dashboard`.
 
-Two parallel lookup tables keep the rendering pipeline branch-free — adding a new widget type or data source means adding one entry to each, not touching the renderer:
+Do not create a separate preview rendering system.
 
-- `config/widgetRegistry.ts`: `WidgetType -> component` (`KpiWidget`, `BarChartWidget`, `LineChartWidget`, `TableWidget`, `ListWidget`)
-- `components/dashboard/dataSources.tsx`: `DataSourceKey -> component` wrapping exactly one RTK Query hook each (hooks can't be called dynamically, hence one wrapper component per source)
+---
 
-`components/dashboard/WidgetRenderer.tsx` composes both lookups: resolve data source → fetch → resolve widget component → render inside `WidgetShell` (shared loading/empty/error chrome). This is the *only* render pipeline; both `/dashboard` and the `/configure` canvas preview go through it. Same data (e.g. `transactions`) must stay renderable as a KPI, bar chart, line chart, table, or list — presentation is purely a function of `widgetType`, not baked into the data source.
+## State Management
 
-### Config lifecycle & validation
+### Redux Toolkit
 
-`config/dashboardConfig.ts` defines `MODULE_CATALOG` (every widget the app knows about) and per-role defaults (`getDefaultConfigForRole`) — role-based visibility is expressed as data (`ROLE_MODULE_IDS`), not as separate hardcoded dashboards per role. Anything read from storage/network first goes through `lib/configValidator.ts`'s `validateDashboardConfig`, which normalizes an arbitrary/malformed/older-schema payload (missing properties, invalid layouts, unknown data sources, stale `order`) into a well-formed `DashboardConfig`, falling back to role defaults rather than throwing — never assume a `DashboardConfig` in hand is well-formed without going through this path if it didn't come from the store. An unresolvable `widgetType` renders `UnsupportedWidget` instead of crashing.
+Use Redux Toolkit for client/UI state:
 
-### Independent widget states
+* Selected role
+* Selected widget
+* Draft dashboard configuration
+* Widget ordering
+* Widget layout
+* Unsaved changes
 
-Each widget fetches its own data independently through its own RTK Query hook (see registry pattern above), so `WidgetShell` gives every widget its own loading/empty/error/success state — one widget's `SIMULATE_ERROR_VALUE` failure never affects sibling widgets or crashes the dashboard.
+### RTK Query
 
-### Pagination
+Use RTK Query for server/data state:
 
-`/dashboard` loads modules page-by-page (`hooks/useInfiniteModules.ts`, `PAGE_SIZE = 9`) via `getDashboardModules`, which RTK Query accumulates into one cache entry per role (custom `serializeQueryArgs`/`merge` in `dashboardApi.ts`) rather than one entry per page — this is what makes "append, don't refetch already-loaded pages" work. `LoadMoreSentinel` (IntersectionObserver) triggers `loadMore` both on scroll and when loaded content doesn't yet fill the viewport. A failed page keeps already-loaded modules visible and offers Retry without discarding state.
+* Dashboard configuration
+* Customers
+* Transactions
+* Revenue
+* Orders
+* Payments
+* Dashboard modules
+* Loading/error states
+* Caching
+* Mutations
+* Pagination
 
-### Layout grid
+Do not duplicate RTK Query data into Redux without a clear reason.
 
-Widgets declare an arbitrary `layout: {width, height}` (1–12 / 1–4), but the actual CSS grid only supports fixed buckets. `lib/layoutBuckets.ts` snaps to the nearest supported width bucket (`[3,4,6,8,12]`) and clamps height (`1–4`). The `/configure` canvas (`DashboardCanvas.tsx`) imports `DashboardGrid.module.css` directly from the dashboard component rather than duplicating grid CSS, so the builder preview matches `/dashboard` pixel-for-pixel. Responsiveness comes from this one grid definition reflowing at different viewport widths, not from separate per-breakpoint layouts.
+---
 
-### Path alias
+## Widget Registry
 
-`@/*` maps to the repo root (`tsconfig.json`), e.g. `@/types/dashboard`, `@/store/hooks`.
+Use a registry pattern.
+
+Do not create large `if`/`switch` statements based on `widgetType` or `dataSource`.
+
+Example:
+
+```ts
+const widgetRegistry = {
+  kpi: KpiWidget,
+  barChart: BarChartWidget,
+  lineChart: LineChartWidget,
+  table: TableWidget,
+  list: ListWidget,
+};
+```
+
+Adding a widget should normally require adding it to the appropriate registry rather than modifying the dashboard renderer.
+
+The same data source must be usable by different widget types.
+
+For example:
+
+```text
+transactions
+   ├── KPI
+   ├── Bar Chart
+   ├── Line Chart
+   ├── Table
+   └── List
+```
+
+---
+
+## Configuration
+
+Treat dashboard configuration as declarative data.
+
+Use a structure similar to:
+
+```ts
+type WidgetConfig = {
+  id: string;
+  type: string;
+  title: string;
+  dataSource: string;
+  visible: boolean;
+  order: number;
+  layout: {
+    width: number;
+    height: number;
+  };
+  filters?: FilterConfig[];
+  sorting?: SortConfig[];
+};
+```
+
+Validate and normalize configuration before rendering.
+
+Handle:
+
+* Missing properties
+* Invalid widget types
+* Invalid data sources
+* Invalid layouts
+* Invalid filters
+* Invalid ordering
+* Older configuration formats
+
+Invalid widgets should show a safe fallback rather than crash the dashboard.
+
+---
+
+## Widget Catalogue
+
+The available widget catalogue should contain **preview-only cards**.
+
+Do not put configuration controls inside catalogue cards.
+
+Users should:
+
+```text
+Browse widget
+     ↓
+Drag to canvas
+     ↓
+Select widget
+     ↓
+Configure widget
+```
+
+The configuration panel should be context-aware based on the selected widget type.
+
+---
+
+## Widget States
+
+Every widget must independently support:
+
+* Loading
+* Success
+* Empty
+* Error
+
+One failed widget must not break the rest of the dashboard.
+
+Errors must be visible to the user.
+
+Do not silently display incorrect or stale data.
+
+---
+
+## Mock API
+
+Keep mock server/data logic inside:
+
+```text
+data/mockApi.ts
+data/mockData.ts
+```
+
+Mock API calls should:
+
+* Be asynchronous
+* Simulate network latency
+* Be capable of failing
+* Support dashboard configuration persistence
+
+Do not use `localStorage` as the source of truth.
+
+RTK Query should access the mock API through the existing API layer.
+
+---
+
+## Pagination / Infinite Scroll
+
+Use `IntersectionObserver` for dashboard-level infinite scrolling.
+
+Keep dashboard module pagination separate from Table/List widget pagination.
+
+Requirements:
+
+* Load modules incrementally
+* Prevent duplicate requests
+* Stop when there are no more modules
+* Preserve previously loaded modules
+* Show loading state
+* Show retry on failure
+
+Do not use scroll-position calculations.
+
+---
+
+## Layout
+
+Use CSS Grid.
+
+Keep the dashboard and configuration canvas visually consistent.
+
+The same grid rules should be used by both `/dashboard` and `/configure`.
+
+Do not create separate grid implementations for preview and dashboard.
+
+---
+
+## TypeScript
+
+Use strict TypeScript.
+
+Avoid `any`.
+
+Prefer typed configuration models and discriminated unions where useful.
+
+---
+
+## Important Rules
+
+### Do
+
+* Keep the dashboard configuration-driven.
+* Keep widgets independent.
+* Use RTK Query for server state.
+* Use Redux Toolkit for client state.
+* Validate configuration.
+* Isolate widget errors.
+* Use the widget registry.
+* Keep preview and dashboard rendering identical.
+* Keep persistence behind the API layer.
+* Use stable widget IDs.
+* Keep the code modular.
+
+### Do not
+
+* Hardcode dashboards per role.
+* Hardcode widgets inside `Dashboard.tsx`.
+* Create a separate preview renderer.
+* Use `localStorage` as primary persistence.
+* Put server data into Redux unnecessarily.
+* Use large `if`/`switch` statements for widget types.
+* Allow one widget failure to crash the dashboard.
+* Silently display invalid data.
+* Add unnecessary dependencies.
+
+---
+
+## Before Finishing Work
+
+Run:
+
+```bash
+npm run lint
+npx tsc --noEmit
+npm run build
+```
+
+Check that changes do not break:
+
+* `/dashboard`
+* `/configure`
+* Widget rendering
+* Drag and drop
+* Configuration saving
+* Role switching
+* Loading/error/empty states
+* Infinite scrolling
