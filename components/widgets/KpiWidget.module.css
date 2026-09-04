@@ -1,0 +1,19 @@
+.kpi {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  gap: 6px;
+}
+
+.value {
+  font-size: 32px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--color-text-primary);
+}
+
+.caption {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}

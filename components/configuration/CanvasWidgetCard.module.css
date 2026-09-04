@@ -1,0 +1,28 @@
+.wrapper {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  touch-action: none;
+  cursor: pointer;
+  border-radius: var(--radius);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.1s ease;
+}
+
+.wrapper:hover {
+  outline-color: var(--color-border);
+}
+
+.selected {
+  outline-color: var(--color-primary);
+}
+
+.dragging {
+  opacity: 0.4;
+}
+
+.hidden {
+  opacity: 0.55;
+}

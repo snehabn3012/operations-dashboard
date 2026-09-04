@@ -1,0 +1,81 @@
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  gap: 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+}
+
+.logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.brandName {
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.link:hover {
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+.linkActive {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.icon {
+  font-size: 15px;
+  width: 18px;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .sidebar {
+    width: 64px;
+    padding: 16px 8px;
+  }
+  .brandName {
+    display: none;
+  }
+  .linkLabel {
+    display: none;
+  }
+}
