@@ -12,7 +12,10 @@ npm run build
 npm run start
 npm run lint
 npx tsc --noEmit
+npm run test
 ```
+
+`npm run test` runs Vitest once (`vitest.config.ts` resolves the `@/*` alias). Test files live next to the code they cover (`*.test.ts`).
 
 ## Tech Stack
 
@@ -344,6 +347,7 @@ Run:
 ```bash
 npm run lint
 npx tsc --noEmit
+npm run test
 npm run build
 ```
 
