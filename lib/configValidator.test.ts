@@ -3,19 +3,19 @@ import { describe, expect, it } from "vitest";
 import { CURRENT_CONFIG_VERSION, getDefaultConfigForRole } from "@/config/dashboardConfig";
 import { validateDashboardConfig } from "@/lib/configValidator";
 
-describe("validateDashboardConfig: hostile input", () => {
-  // Both sides call `new Date().toISOString()` independently (once inside
-  // validateDashboardConfig's fallback, once here for comparison), so
-  // `updatedAt` is compared separately -- a millisecond boundary crossed
-  // between the two calls would otherwise make this flaky.
-  function expectEqualsDefaultConfig(result: ReturnType<typeof getDefaultConfigForRole>, role: Parameters<typeof getDefaultConfigForRole>[0]) {
-    const expected = getDefaultConfigForRole(role);
-    expect(result.role).toEqual(expected.role);
-    expect(result.version).toEqual(expected.version);
-    expect(result.revision).toEqual(expected.revision);
-    expect(result.widgets).toEqual(expected.widgets);
-  }
+// Both sides call `new Date().toISOString()` independently (once inside
+// validateDashboardConfig's fallback, once here for comparison), so
+// `updatedAt` is compared separately -- a millisecond boundary crossed
+// between the two calls would otherwise make this flaky.
+function expectEqualsDefaultConfig(result: ReturnType<typeof getDefaultConfigForRole>, role: Parameters<typeof getDefaultConfigForRole>[0]) {
+  const expected = getDefaultConfigForRole(role);
+  expect(result.role).toEqual(expected.role);
+  expect(result.version).toEqual(expected.version);
+  expect(result.revision).toEqual(expected.revision);
+  expect(result.widgets).toEqual(expected.widgets);
+}
 
+describe("validateDashboardConfig: hostile input", () => {
   it("falls back to role defaults for input that isn't even shaped like a config", () => {
     for (const hostile of [null, undefined, "not a config", 42, [], { widgets: "not an array" }]) {
       expectEqualsDefaultConfig(validateDashboardConfig(hostile, "financeManager"), "financeManager");
@@ -95,5 +95,104 @@ describe("validateDashboardConfig: hostile input", () => {
     expect(validateDashboardConfig({ ...base, revision: "not-a-number" }, "admin").revision).toBe(0);
     expect(validateDashboardConfig({ ...base, revision: null }, "admin").revision).toBe(0);
     expect(validateDashboardConfig(base, "admin").revision).toBe(0);
+  });
+});
+
+describe("validateDashboardConfig: schema drift (version 1 -> current)", () => {
+  it("migrates a version-1 config's renamed/reshaped fields, preserving the user's customization rather than reverting to catalog defaults", () => {
+    // "revenue" is a real module-catalog entry whose defaults are title
+    // "Revenue" and layout {width: 3, height: 1} -- deliberately different
+    // from what this v1 widget customized, so if migration silently failed
+    // and fell back to those catalog defaults instead, this test would catch it.
+    const v1Config = {
+      version: 1,
+      widgets: [
+        {
+          id: "revenue",
+          title: "My Custom Revenue Widget",
+          dataSource: "revenue",
+          type: "lineChart", // v1 name for widgetType
+          visible: true,
+          order: 1,
+          size: { w: 8, h: 3 }, // v1 name/shape for layout
+          filter: { value: "ytd", label: "Year to Date" },
+        },
+      ],
+    };
+
+    const result = validateDashboardConfig(v1Config, "admin");
+
+    expect(result.version).toBe(CURRENT_CONFIG_VERSION);
+    const widget = result.widgets[0];
+    expect(widget.widgetType).toBe("lineChart"); // migrated from `type`
+    expect(widget.layout).toEqual({ width: 8, height: 3 }); // migrated from `size.w`/`size.h`
+    expect(widget.title).toBe("My Custom Revenue Widget"); // untouched field, still preserved
+    expect(widget.filter).toEqual({ value: "ytd", label: "Year to Date" }); // untouched field, still preserved
+  });
+
+  it("prefers the current-shape field when a widget carries both the old and new names", () => {
+    const v1Config = {
+      version: 1,
+      widgets: [
+        { id: "revenue", dataSource: "revenue", type: "lineChart", widgetType: "kpi", size: { w: 8, h: 3 }, layout: { width: 4, height: 1 } },
+      ],
+    };
+
+    const result = validateDashboardConfig(v1Config, "admin");
+
+    expect(result.widgets[0].widgetType).toBe("kpi");
+    expect(result.widgets[0].layout).toEqual({ width: 4, height: 1 });
+  });
+
+  it("does not attempt migration for a version it doesn't recognize -- only version 1 is handled", () => {
+    for (const unrecognizedVersion of [undefined, 0, 99]) {
+      const config = {
+        version: unrecognizedVersion,
+        widgets: [{ id: "revenue", dataSource: "revenue", type: "lineChart", size: { w: 8, h: 3 } }],
+      };
+
+      const result = validateDashboardConfig(config, "admin");
+
+      // `type`/`size` aren't recognized outside the v1 migration path, so
+      // normalizeWidget falls back to the module catalog's defaults for them,
+      // same as any other missing field.
+      expect(result.widgets[0].widgetType).toBe("kpi");
+      expect(result.widgets[0].layout).toEqual({ width: 3, height: 1 });
+    }
+  });
+
+  it("falls back to catalog defaults, rather than throwing or coercing, when a field is the wrong JS type entirely", () => {
+    // Not just missing -- present, but shaped nothing like the real field
+    // (a number where a string is expected, a string where an object is
+    // expected). Distinct from the "unknown string value" cases covered
+    // elsewhere: here the *type* itself is wrong, not just the value.
+    const config = {
+      widgets: [
+        { id: "revenue", dataSource: "revenue", widgetType: 42, layout: "not-an-object", visible: "not-a-boolean" },
+      ],
+    };
+
+    const result = validateDashboardConfig(config, "admin");
+
+    expect(result.widgets[0].widgetType).toBe("kpi"); // catalog default, `42` ignored
+    // A *present-but-wrong-type* layout isn't treated as "missing" by `??`
+    // (only null/undefined are), so it never reaches the catalog's default
+    // and falls back to normalizeLayout's own generic default instead.
+    expect(result.widgets[0].layout).toEqual({ width: 6, height: 2 });
+    expect(result.widgets[0].visible).toBe(true); // default, the non-boolean ignored
+  });
+
+  it("falls back to role defaults entirely when handed a well-formed but entirely different endpoint's response shape", () => {
+    // e.g. a ModulesPage (from getDashboardModules) mistakenly passed where a
+    // DashboardConfig was expected -- valid JSON, just not this shape at all.
+    const modulesPageShapedResponse = {
+      modules: [{ id: "revenue", title: "Revenue", dataSource: "revenue", widgetType: "kpi", visible: true, order: 1, layout: { width: 3, height: 1 } }],
+      page: 1,
+      pageSize: 9,
+      total: 1,
+      hasMore: false,
+    };
+
+    expectEqualsDefaultConfig(validateDashboardConfig(modulesPageShapedResponse, "admin"), "admin");
   });
 });

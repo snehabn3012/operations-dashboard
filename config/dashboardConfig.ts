@@ -8,7 +8,8 @@ import {
 } from "@/types/dashboard";
 import { SIMULATE_ERROR_VALUE } from "@/types/dashboard";
 
-export const CURRENT_CONFIG_VERSION = 1;
+/** Bumped from 1 to 2 to demonstrate schema migration -- see migrateConfigV1ToV2 in lib/configValidator.ts for what changed. */
+export const CURRENT_CONFIG_VERSION = 2;
 
 /** Every module the application knows how to render, keyed by id. Roles select a subset. */
 const MODULE_CATALOG_BASE: Omit<WidgetConfig, "order">[] = [

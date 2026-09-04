@@ -59,6 +59,7 @@ Anything that didn't just come out of the Redux store (i.e. anything read from t
 - clamps `layout.width`/`layout.height` into valid ranges
 - resyncs `order` from whatever hint survived normalization
 - falls back to `getDefaultConfigForRole(role)` entirely if the payload is unusable
+- migrates a recognized older schema version's field names/shapes into the current ones before any of the above runs — see section 11
 
 This is what lets the renderer assume a well-formed config always, rather than defensively checking shapes everywhere.
 
@@ -105,14 +106,23 @@ A few deliberate choices:
 - **A fresh load clears history, a save does not.** `loadDraftConfig` (the initial per-role fetch, and "Reload Latest" after a save conflict) and switching roles both clear `past`/`future`, since old snapshots can't reliably apply against a different role's or a different server revision's widgets. Saving, by contrast, does *not* clear history — a bad save is still locally undoable and re-saveable.
 - **Consecutive edits to the same widget's title coalesce into one undo step**, tracked via `coalescingTitleWidgetId` (reset by any other action). Without this, typing a title would produce one undo step per keystroke; verified live (see below) that a full retyped title undoes in a single step, not character by character.
 - **Undo/redo are also on the keyboard** (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z), but the handler checks `document.activeElement` and does nothing while focus is in an input/textarea/select/contenteditable — otherwise it would hijack the browser's native undo inside the title field, or interfere with a `<select>`.
+- **`past` is capped at `MAX_HISTORY` (50) steps**, oldest dropped first, so a long editing session can't grow history unboundedly. `future` needs no separate cap — it only grows by moving entries out of `past` via undo, so it's already bounded by the same limit.
 
 Covered by `store/dashboardSlice.test.ts` (undo/redo, no-op when empty, branching discards stale redo on a new edit, coalescing, Reset recoverability, history clearing on load/role-switch, history surviving a save) and `components/configuration/ConfigurationPanel.test.tsx` (button enabled/disabled state through an edit → undo → redo cycle).
 
-## 11. Responsive layout
+## 11. Schema drift (config version migration)
+
+`validateDashboardConfig` accepts `version: number` at face value but never used to *do* anything with it — it always stamped the output as `CURRENT_CONFIG_VERSION` without checking whether the incoming shape actually matched. That's "tolerates old versions without crashing," which isn't the same as "handles old configuration versions" (brief, section 21): if an older saved config used different field names, the validator would treat those old names as *missing* and silently fall back to the module catalog's defaults (or drop the field entirely) — a user's saved customization quietly reverting with no error and no test proving that was even the actual behavior.
+
+This codebase has only ever had one real schema, so there was no genuine prior version to migrate from. `CURRENT_CONFIG_VERSION` is now `2`, and version `1` is defined (retroactively, as a worked example — not real history) as having used `type` instead of `widgetType` and `size: {w, h}` instead of `layout: {width, height}`. `migrateConfigV1ToV2` (`lib/configValidator.ts`) runs before normalization when `raw.version === 1`, translating those old names into the current shape so the user's actual saved values survive rather than reverting to catalog defaults. It covers two different kinds of drift deliberately — a flat rename and a nested reshape — rather than just the trivial case. Only `version === 1` is recognized; anything else (missing version, an unrecognized future version) falls through to the existing best-effort normalization unchanged, by design — this is a single explicit migration step, not a general version-chain migration engine, since there's only one historical shape to migrate from today.
+
+Proven in `lib/configValidator.test.ts`: a v1-shaped widget with a *non-default* title/layout/filter survives migration with those exact values intact (not the module catalog's defaults, which would be silently substituted if migration weren't running); a widget carrying both old and new field names prefers the current one; and versions other than `1` are confirmed to *not* trigger migration, falling back to catalog defaults for the unrecognized old field names as before.
+
+## 12. Responsive layout
 
 `layout.width`/`layout.height` on each widget are arbitrary (1–12 / 1–4), but `lib/layoutBuckets.ts` snaps them into a fixed set of grid-span buckets (`[3,4,6,8,12]` widths, clamped 1–4 heights) that the shared `DashboardGrid.module.css` actually implements. Responsiveness is this one grid definition reflowing at different viewport widths — there's no separate per-breakpoint layout to keep in sync, and the `/configure` canvas imports the same CSS module rather than a copy, so the builder preview matches `/dashboard` pixel-for-pixel.
 
-## 12. Trade-offs & deliberate scope cuts
+## 13. Trade-offs & deliberate scope cuts
 
 This is a prototype, and some things were intentionally kept simple rather than "production-complete":
 
@@ -122,12 +132,13 @@ This is a prototype, and some things were intentionally kept simple rather than 
 - **No widget-level pagination** for Table widgets — only dashboard-level module pagination (section 12–16 of the brief) is implemented; a Table widget renders all rows its data source returns.
 - **Filter/sort/metric are fixed enumerated options per data source** (`FILTER_OPTIONS_BY_SOURCE` etc.), not a freeform query builder.
 - **Concurrent-edit conflicts are proven at the unit level, not cross-tab** — see section 9. The mock API's client-side, per-tab storage is the limiting factor here, not the concurrency logic itself.
-- **Undo/redo history is in-memory only** — it doesn't survive a page reload or a role switch (see section 10), and there's no cap on how many steps it can hold. Both match the brief's own framing ("a local editing history for the current draft," not a full collaborative history system); a size cap would be one line to add if long editing sessions ever made memory a real concern.
+- **Undo/redo history is in-memory only** — it doesn't survive a page reload or a role switch (see section 10). It's capped at `MAX_HISTORY` (50) steps, oldest dropped first, so a very long editing session can't grow it unboundedly; both match the brief's own framing ("a local editing history for the current draft," not a full collaborative history system).
+- **The schema-drift migration (section 11) is a worked example, not real history** — this app has only ever had one real schema. It proves the *mechanism* (a version-gated migration step preserves renamed/reshaped data instead of silently defaulting it), not an actual historical rename. It's also a single explicit step rather than a general version-chain engine, since only one prior version is defined.
 
-## 13. What would change with more time
+## 14. What would change with more time
 
 - Swap `fakeBaseQuery` for `fetchBaseQuery` against a real API (the seam described in section 2 is designed for exactly this) — this is also what would let the concurrency check in section 9 actually be exercised across two real users.
 - Alternatively, back `configStore` with `localStorage` + a `storage` event listener so the conflict flow is at least demonstrable across two tabs in one browser without a real backend.
 - Make Table/List column selection configurable per widget rather than fixed per data source.
 - Add real authentication and make role a property of the authenticated user rather than a free dropdown.
-- Extend automated coverage further: a drag-and-drop add/reorder flow end-to-end test, and a WidgetRenderer test that swaps `widgetType` on a fixed config and asserts the presentation changes with no data refetch. (Current coverage: `store/dashboardSlice.test.ts`, `lib/configValidator.test.ts`, `components/dashboard/WidgetRenderer.test.tsx`, `components/configuration/ConfigurationPanel.test.tsx`, `data/mockApi.test.ts`.)
+- The one remaining coverage gap: a drag-and-drop add/reorder flow end-to-end test (dnd-kit's pointer-based drag events are the hard part to simulate realistically in jsdom). Current coverage: `store/dashboardSlice.test.ts` (builder UX, undo/redo, history cap), `lib/configValidator.test.ts` (hostile input, schema-version migration), `components/dashboard/WidgetShell.test.tsx` (loading/empty/error/success presentation), `components/dashboard/WidgetRenderer.test.tsx` (unsupported widget/data source, real loading→success and loading→error via RTK Query, sibling-widget error isolation), `components/configuration/ConfigurationPanel.test.tsx` (role switching, undo/redo buttons, save-conflict preserving the local draft), `data/mockApi.test.ts` (optimistic concurrency), `hooks/useInfiniteModules.test.tsx` (next page, end of pagination, duplicate-request prevention, failed page, retry).

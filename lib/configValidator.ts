@@ -19,6 +19,35 @@ function normalizeLayout(raw: unknown): WidgetLayout {
   return { width, height };
 }
 
+/**
+ * Worked example of schema drift, so "handle old configuration versions"
+ * (brief, section 21) means something more than "don't crash on them": this
+ * codebase has only ever had one real schema, so there's no genuine version 1
+ * to migrate from -- this pretends version 1 used `type` instead of
+ * `widgetType` and `size: {w, h}` instead of `layout: {width, height}`, and
+ * migrates a widget from that shape into the current one before normal
+ * normalization runs. Only version 1 is recognized; anything else (missing
+ * version, an unrecognized future version) falls through to the existing
+ * best-effort normalization below unchanged.
+ */
+function migrateWidgetV1ToV2(raw: unknown): unknown {
+  if (!isRecord(raw)) return raw;
+  const migrated: Record<string, unknown> = { ...raw };
+  if (typeof migrated.type === "string" && migrated.widgetType === undefined) {
+    migrated.widgetType = migrated.type;
+  }
+  delete migrated.type;
+  if (isRecord(migrated.size) && migrated.layout === undefined) {
+    migrated.layout = { width: migrated.size.w, height: migrated.size.h };
+  }
+  delete migrated.size;
+  return migrated;
+}
+
+function migrateConfigV1ToV2(raw: Record<string, unknown> & { widgets: unknown[] }): Record<string, unknown> & { widgets: unknown[] } {
+  return { ...raw, widgets: raw.widgets.map(migrateWidgetV1ToV2), version: CURRENT_CONFIG_VERSION };
+}
+
 let anonymousWidgetCounter = 0;
 
 /**
@@ -87,10 +116,16 @@ export function validateDashboardConfig(raw: unknown, role: Role): DashboardConf
     return getDefaultConfigForRole(role);
   }
 
+  // isRecord(raw) && Array.isArray(raw.widgets) were just checked above, but
+  // TypeScript doesn't carry that narrowing through the ternary below.
+  const checkedRaw = raw as Record<string, unknown> & { widgets: unknown[] };
+  const migrated: Record<string, unknown> & { widgets: unknown[] } =
+    checkedRaw.version === 1 ? migrateConfigV1ToV2(checkedRaw) : checkedRaw;
+
   // Sort by each entry's own `order` hint (falling back to array position)
   // before normalizing, so the final resync below produces a sequence that
   // still respects an incoming order even if some entries get dropped.
-  const withHints = raw.widgets.map((item, index) => ({
+  const withHints = migrated.widgets.map((item, index) => ({
     item,
     hint: isRecord(item) && Number.isFinite(Number(item.order)) ? Number(item.order) : index,
   }));

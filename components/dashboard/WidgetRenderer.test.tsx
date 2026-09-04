@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { Provider } from "react-redux";
 import { afterEach, describe, expect, it } from "vitest";
 
 import WidgetRenderer from "@/components/dashboard/WidgetRenderer";
-import { WidgetConfig } from "@/types/dashboard";
+import { makeStore } from "@/store/store";
+import { SIMULATE_ERROR_VALUE, WidgetConfig } from "@/types/dashboard";
 
 afterEach(cleanup);
 
@@ -38,5 +40,48 @@ describe("WidgetRenderer: hostile configuration reaching the render layer", () =
     render(<WidgetRenderer config={hostile} />);
 
     expect(screen.getByText("Unknown data source.").textContent).toBe("Unknown data source.");
+  });
+});
+
+function renderWithStore(...configs: WidgetConfig[]) {
+  return render(
+    <Provider store={makeStore()}>
+      {configs.map((config) => (
+        <WidgetRenderer key={config.id} config={config} />
+      ))}
+    </Provider>,
+  );
+}
+
+describe("WidgetRenderer: real data fetching states", () => {
+  it("shows a loading skeleton, then renders successfully for a normally-configured widget", async () => {
+    const widget: WidgetConfig = { ...BASE_WIDGET, id: "txns", dataSource: "transactions", widgetType: "table" };
+    renderWithStore(widget);
+
+    expect(screen.getByRole("status", { name: "Loading widget" })).toBeTruthy();
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 3000 });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows a loading skeleton, then an error, when the widget's filter simulates a failure", async () => {
+    const widget: WidgetConfig = { ...BASE_WIDGET, id: "err", filter: { value: SIMULATE_ERROR_VALUE, label: "Simulate Error" } };
+    renderWithStore(widget);
+
+    expect(screen.getByRole("status", { name: "Loading widget" })).toBeTruthy();
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy(), { timeout: 3000 });
+    expect(screen.getByRole("alert").textContent).toContain("Simulated failure");
+  });
+
+  it("isolates widget failures: one widget's error doesn't affect a sibling widget's success", async () => {
+    const failing: WidgetConfig = { ...BASE_WIDGET, id: "failing", filter: { value: SIMULATE_ERROR_VALUE, label: "Simulate Error" } };
+    const healthy: WidgetConfig = { ...BASE_WIDGET, id: "healthy", dataSource: "orders", widgetType: "table" };
+    renderWithStore(failing, healthy);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("alert").length).toBe(1); // only the failing widget
+      expect(screen.queryAllByRole("status").length).toBe(0); // both settled, none stuck loading
+    }, { timeout: 3000 });
   });
 });

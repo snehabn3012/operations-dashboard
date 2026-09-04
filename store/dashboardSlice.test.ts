@@ -4,6 +4,7 @@ import reducer, {
   addWidget,
   DashboardUiState,
   loadDraftConfig,
+  MAX_HISTORY,
   redo,
   removeWidget,
   reorderWidgets,
@@ -29,7 +30,7 @@ function makeWidget(overrides: Partial<WidgetConfig> & Pick<WidgetConfig, "id" |
 }
 
 function makeConfig(widgets: WidgetConfig[]): DashboardConfig {
-  return { role: "financeManager", version: 1, widgets, updatedAt: "2026-01-01T00:00:00.000Z", revision: 0 };
+  return { role: "financeManager", version: 2, widgets, updatedAt: "2026-01-01T00:00:00.000Z", revision: 0 };
 }
 
 const initialState: DashboardUiState = {
@@ -248,5 +249,26 @@ describe("dashboardSlice: undo/redo", () => {
 
     state = reducer(state, undo());
     expect(state.draftConfig?.widgets[0].visible).toBe(true); // recovered even after saving the bad edit
+  });
+
+  it("caps history at MAX_HISTORY steps, dropping the oldest first", () => {
+    let state = reducer(initialState, loadDraftConfig(makeConfig([makeWidget({ id: "a", order: 1, visible: true })])));
+
+    // Alternate visibility MAX_HISTORY + 10 times -- each toggle is its own
+    // undo step (not a coalesced title edit), so this produces more history
+    // entries than the cap allows.
+    for (let i = 0; i < MAX_HISTORY + 10; i++) {
+      state = reducer(state, updateWidgetVisibility({ id: "a", visible: i % 2 === 0 }));
+    }
+
+    expect(state.past.length).toBe(MAX_HISTORY);
+
+    // Undoing MAX_HISTORY times empties `past`; there is no way back to the
+    // very first (now-dropped) edits.
+    for (let i = 0; i < MAX_HISTORY; i++) {
+      state = reducer(state, undo());
+    }
+    expect(state.past.length).toBe(0);
+    expect(state.future.length).toBe(MAX_HISTORY);
   });
 });

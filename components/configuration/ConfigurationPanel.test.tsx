@@ -4,6 +4,7 @@ import { Provider } from "react-redux";
 import { afterEach, describe, expect, it } from "vitest";
 
 import ConfigurationPanel from "@/components/configuration/ConfigurationPanel";
+import { getDashboardConfig, updateDashboardConfig } from "@/data/mockApi";
 import { makeStore } from "@/store/store";
 
 // Each test renders its own store/component tree; without this, a previous
@@ -77,5 +78,40 @@ describe("ConfigurationPanel: undo/redo", () => {
     await waitFor(() => expect((screen.getByLabelText("Visible on dashboard") as HTMLInputElement).checked).toBe(false));
     expect(undoButton().disabled).toBe(false);
     expect(redoButton().disabled).toBe(true);
+  });
+});
+
+describe("ConfigurationPanel: save conflict", () => {
+  it("shows the conflict banner and preserves the local (unsaved) draft rather than discarding or overwriting it", async () => {
+    render(
+      <Provider store={makeStore()}>
+        <ConfigurationPanel />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByTestId("canvas-card").length).toBe(18));
+
+    // Make a local edit (leave the drawer open so we can re-check its state after the conflict).
+    screen.getAllByTestId("canvas-card")[0].click();
+    const visibleCheckbox = (await screen.findByLabelText("Visible on dashboard")) as HTMLInputElement;
+    visibleCheckbox.click();
+    expect(visibleCheckbox.checked).toBe(false);
+
+    // Simulate a second editor: read-then-write the currently stored config
+    // unchanged, which succeeds (it's still on the current revision) and
+    // bumps the stored revision -- exactly what "someone else saved changes"
+    // looks like from this component's perspective.
+    await updateDashboardConfig("admin", await getDashboardConfig("admin"));
+
+    // This save is now based on a stale revision.
+    screen.getByRole("button", { name: "Save Configuration" }).click();
+
+    await screen.findByText(/changed by someone else/);
+
+    // The local edit must still be there -- neither reverted to the
+    // pre-edit state nor overwritten by the other editor's (identical, in
+    // this case) save.
+    expect((screen.getByLabelText("Visible on dashboard") as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 });

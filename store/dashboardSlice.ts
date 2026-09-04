@@ -61,10 +61,16 @@ function snapshotWidgets(widgets: WidgetConfig[]): WidgetConfig[] {
   return JSON.parse(JSON.stringify(widgets));
 }
 
+/** Caps local undo/redo history so a very long editing session can't grow it unboundedly; oldest steps are dropped first. `future` needs no separate cap -- it can only grow by moving entries out of `past` via undo, so it's already bounded by this. */
+export const MAX_HISTORY = 50;
+
 /** Records an undo step for the widget-content change about to happen, and invalidates any redo path (a fresh edit after an undo discards the old future, rather than branching). Call before mutating draftConfig.widgets. */
 function pushHistory(state: DashboardUiState) {
   if (!state.draftConfig) return;
   state.past.push(snapshotWidgets(state.draftConfig.widgets));
+  if (state.past.length > MAX_HISTORY) {
+    state.past.shift();
+  }
   state.future = [];
   state.coalescingTitleWidgetId = null;
 }
